@@ -4,6 +4,7 @@ library(data.table)
 library(minpack.lm)
 library(plotly)
 library(mclust)
+library(parallel)
 
 tidy_conversion <- function(data) {
    x_axis <- data[, 1]
@@ -17,7 +18,7 @@ tidy_conversion <- function(data) {
        mutate(id = as.numeric(sub("V", "", id)) - 1)
 }
 
-find_peak_locations <- function(raw) {
+find_peak_locations <- function(raw, cl) {
     data <- raw[raw$V1 > 375 & raw$V1 < 420, ]
     x_axis <- data$V1
     
@@ -25,51 +26,52 @@ find_peak_locations <- function(raw) {
     a1g_idx <- which(x_axis > 395 & x_axis < 420)
     results <- vector("list", ncol(data) - 1)
     
-    for (i in 2:ncol(data)) {
+    results <- parLapply(cl, 2:ncol(data), function(i) {
         intensity <- data[[i]]
         intensity <- intensity / max(raw[[i]], na.rm = TRUE) * 1000
         
         peak1 <- e2g_idx[which.max(intensity[e2g_idx])]
         peak2 <- a1g_idx[which.max(intensity[a1g_idx])]
         
-        results[[i-1]] <- tibble(
+        print(paste0("Spectrum ", (i - 1), " processed."))
+        
+        tibble::tibble(
             id = i - 1,
             x_axis1 = x_axis[peak1],
             intensity1 = intensity[peak1],
             x_axis2 = x_axis[peak2],
             intensity2 = intensity[peak2]
         )
-        print(paste0("Spectrum ", (i - 1), " processed."))
-    }
-    peak_locations <- bind_rows(results)
+    })
+    
+    peak_locations <- dplyr::bind_rows(results)
     peak_locations
 }
 
-gaussian <- function(x, A, mu, sigma) {
-    A * exp(-(x - mu) ^ 2 / (2 * sigma ^ 2))
-}
-
-double_gaussian <- function(x, A1, mu1, sigma1, A2, mu2, sigma2, C) {
-    gaussian(x, A1, mu1, sigma1) + gaussian(x, A2, mu2, sigma2) + C
-}
-
-auto_gaussian_summary <- function(raw, peak_locations) {
+auto_gaussian_summary <- function(raw, peak_locations, cl) {
     data <- raw[raw$V1 > 375 & raw$V1 < 420, ]
     x <- data$V1
-    results <- vector("list", nrow(peak_locations))
     
-    for (i in seq_len(nrow(peak_locations))) {
+    results <- parLapply(cl, seq_len(nrow(peak_locations)), function(i) {
+        gaussian <- function(x, A, mu, sigma) {
+            A * exp(-(x - mu)^2 / (2 * sigma^2))
+        }
+        double_gaussian <- function(x, A1, mu1, sigma1, A2, mu2, sigma2, C) {
+            gaussian(x, A1, mu1, sigma1) + gaussian(x, A2, mu2, sigma2) + C
+        }
+        
         spectrum_id <- peak_locations$id[i]
+        
         y <- data[[spectrum_id + 1]]
         spectrum_max <- max(raw[[spectrum_id + 1]], na.rm = TRUE)
         y <- y / spectrum_max * 1000
         
-        A1_guess <- peak_locations$intensity1[i] / spectrum_max * 1000
-        A2_guess <- peak_locations$intensity2[i] / spectrum_max * 1000
+        A1_guess <- peak_locations$intensity1[i]
+        A2_guess <- peak_locations$intensity2[i]
         mu1_guess <- peak_locations$x_axis1[i]
         mu2_guess <- peak_locations$x_axis2[i]
         
-        error_return <- tibble(
+        error_return <- tibble::tibble(
             id = spectrum_id, mu1 = 0, mu2 = 0, fwhm1 = 0, fwhm2 = 0,
             A1 = 0, A2 = 0, area1 = 0, area2 = 0, area_ratio = 0,
             snr = 0, rmse = 0, r_squared = 0, diff_fit = 0
@@ -84,7 +86,7 @@ auto_gaussian_summary <- function(raw, peak_locations) {
                   ),
                   lower = c(0, 370, 0.5, 0, 390, 0.5, 0),
                   upper = c(1500, 400, 20, 1500, 430, 20, 1500)
-                  )
+            )
         },
         error = function(e) {
             cat("Spectrum:", spectrum_id, "\n", e$message, "\n\n")
@@ -131,9 +133,13 @@ auto_gaussian_summary <- function(raw, peak_locations) {
             snr = snr, rmse = rmse, r_squared = r_squared,
             diff_fit = abs(p["mu2"] - p["mu1"])
         )
-    }
-    bind_rows(results)
+    })
+    
+    dplyr::bind_rows(results)
 }
+
+num_cores <- detectCores(logical = FALSE) - 1
+cl <- makeCluster(num_cores, type = "PSOCK")
 
 size <- 300
 file_path <- paste0(
@@ -147,8 +153,9 @@ paste0("Time to Compute: ", compute_time %/% 60, ":", (compute_time %% 60))
 raw <- fread(file_path, header = FALSE)
 data <- raw
 
-peak_summary <- find_peak_locations(data)
-gaussian_results <- auto_gaussian_summary(data, peak_summary)
+peak_summary <- find_peak_locations(data, cl)
+gaussian_results <- auto_gaussian_summary(data, peak_summary, cl)
+stopCluster(cl)
 
 peak_summary <- peak_summary |>
     mutate(
