@@ -7,8 +7,8 @@ library(minpack.lm)
 
 # 6, 24, 8
 
-find_peak_locations <- function(data) {
-    data <- data[data$V1 > 375 & data$V1 < 420, ]
+find_peak_locations <- function(raw) {
+    data <- raw[raw$V1 > 375 & raw$V1 < 420, ]
     x_axis <- data$V1
     
     e2g_idx <- which(x_axis > 375 & x_axis < 395)
@@ -17,11 +17,12 @@ find_peak_locations <- function(data) {
     
     for (i in 2:ncol(data)) {
         intensity <- data[[i]]
+        intensity <- intensity / max(raw[[i]], na.rm = TRUE) * 1000
         
         peak1 <- e2g_idx[which.max(intensity[e2g_idx])]
         peak2 <- a1g_idx[which.max(intensity[a1g_idx])]
         
-        results[[i-1]] <- tibble(
+        results[[i - 1]] <- tibble(
             id = i - 1,
             x_axis1 = x_axis[peak1],
             intensity1 = intensity[peak1],
@@ -41,17 +42,19 @@ double_gaussian <- function(x, A1, mu1, sigma1, A2, mu2, sigma2, C) {
     gaussian(x, A1, mu1, sigma1) + gaussian(x, A2, mu2, sigma2) + C
 }
 
-auto_gaussian_summary <- function(data, peak_locations) {
-    data <- data[data$V1 > 365 & data$V1 < 430, ]
+auto_gaussian_summary <- function(raw, peak_locations) {
+    data <- raw[raw$V1 > 365 & raw$V1 < 430, ]
     x <- data$V1
     results <- vector("list", nrow(peak_locations))
     
     for (i in seq_len(nrow(peak_locations))) {
         spectrum_id <- peak_locations$id[i]
         y <- data[[spectrum_id + 1]]
+        spectrum_max <- max(raw[[spectrum_id + 1]], na.rm = TRUE)
+        y <- y / spectrum_max * 1000
         
-        A1_guess <- peak_locations$intensity1[i]
-        A2_guess <- peak_locations$intensity2[i]
+        A1_guess <- peak_locations$intensity1[i] / spectrum_max * 1000
+        A2_guess <- peak_locations$intensity2[i] / spectrum_max * 1000
         mu1_guess <- peak_locations$x_axis1[i]
         mu2_guess <- peak_locations$x_axis2[i]
         
@@ -69,7 +72,7 @@ auto_gaussian_summary <- function(data, peak_locations) {
                       C = min(y)
                   ),
                   lower = c(0, 370, 0.5, 0, 390, 0.5, 0),
-                  upper = c(Inf, 400, 20, Inf, 430, 20, Inf)
+                  upper = c(1500, 400, 20, 1500, 430, 20, 1500)
             )
         },
         error = function(e) {
@@ -122,15 +125,15 @@ auto_gaussian_summary <- function(data, peak_locations) {
 }
 
 process_spectrum <- function(file, id){
-    data <- fread(file, header = FALSE)
+    raw <- fread(file, header = FALSE)
     
-    peak <- find_peak_locations(data)
-    fit  <- auto_gaussian_summary(data, peak)
+    peak <- find_peak_locations(raw)
+    fit  <- auto_gaussian_summary(raw, peak)
     result <- peak |>
         mutate(
             diff_peak = abs(x_axis1 - x_axis2),
-            ratio = intensity1 / intensity2,
-            ratio = ifelse(ratio > 1, ratio, 1/ratio)
+            intensity_ratio = intensity1 / intensity2,
+            intensity_ratio = ifelse(intensity_ratio > 1, intensity_ratio, 1/intensity_ratio)
         ) |>
         left_join(fit, by = "id")
     
@@ -163,6 +166,8 @@ pca_explained_var <- function(pca) {
         ) +
         theme_bw()
 }
+
+#compute_model <- function(){
 
 filepath <- c(
     "data/training_data/background/07072025_1.txt",
@@ -241,15 +246,24 @@ results <- bind_rows(lapply(seq_along(filepath), function(i) {
 }))
 
 feature_vars <- results |>
-    dplyr::select(diff_fit, fwhm1, fwhm2, area_ratio, ratio, snr, rmse, r_squared)
+    dplyr::select(
+        diff_fit, fwhm1, fwhm2, 
+        area_ratio, intensity_ratio, snr, rmse, r_squared
+        )
+
 feature_pca <- prcomp(feature_vars, center = TRUE, scale. = TRUE)
 results <- results |>
     mutate(
-        PC1 = feature_pca$x[,1],
-        PC2 = feature_pca$x[,2],
-        PC3 = feature_pca$x[,3],
-        PC4 = feature_pca$x[,4],
-        PC5 = feature_pca$x[,5]
+        #PC1 = feature_pca$x[,1],
+        #PC2 = feature_pca$x[,2],
+        #PC3 = feature_pca$x[,3],
+        #PC4 = feature_pca$x[,4],
+        #PC5 = feature_pca$x[,5],
+        PC1 = raw_scores$PC1,
+        PC2 = raw_scores$PC2,
+        PC3 = raw_scores$PC3,
+        PC4 = raw_scores$PC4,
+        PC5 = raw_scores$PC5
     )
 results$Layer <- labels
 
@@ -262,7 +276,7 @@ feature_table <- results |>
         Layer, 
         x_axis1, x_axis2,
         diff_peak,
-        ratio,
+        intensity_ratio,
         mu1, mu2,
         fwhm1, fwhm2, 
         A1, A2,
@@ -286,7 +300,7 @@ lda_model <- lda(
         (
             x_axis1 + x_axis2 +
             diff_peak + 
-            ratio +
+            intensity_ratio +
             mu1 + mu2 +
             fwhm1 + fwhm2 + 
             A1 + A2 +
@@ -302,14 +316,17 @@ lda_model <- lda(
             PC4 + 
             PC5
         ),
-    data = scaled_features,
-    CV = TRUE
+    data = scaled_features#,
+    #CV = TRUE
 )
+#}
 
+#lda_model <- compute_model()
 pred <- lda_model
 pred$class
 table(Actual = feature_table$Layer, Predicted = pred$class)
 mean(pred$class == feature_table$Layer)
+
 
 #filepath <- paste0("data/training_data/monolayer/", "07102025_1", ".txt")
 #data <- fread(filepath, header = FALSE)
