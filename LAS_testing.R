@@ -94,8 +94,7 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
         })
         
         if (is.null(fit)) {
-            results[[i]] <- error_return
-            next
+            return(error_return)
         }
         
         p <- coef(fit)
@@ -118,15 +117,14 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
         r_squared <- 1 - ss_res / ss_tot
         
         if (r_squared < 0.90) {
-            results[[i]] <- error_return
             print("r_squared below 90%")
-            next
+            return(error_return)
         }
         
         noise <- sd(residuals)
         snr <- ifelse(noise == 0, Inf, max(y) / noise)
         
-        results[[i]] <- tibble(
+        tibble(
             id = spectrum_id, mu1 = p["mu1"], mu2 = p["mu2"],
             fwhm1 = fwhm1, fwhm2 = fwhm2, A1 = p["A1"], A2 = p["A2"],
             area1 = area1, area2 = area2, area_ratio = area_ratio,
