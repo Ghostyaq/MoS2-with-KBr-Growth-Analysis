@@ -1,11 +1,10 @@
 library(MASS)
+library(mclust)
 library(plotly)
 library(tidyverse)
 library(pracma)
 library(data.table)
 library(minpack.lm)
-
-# 6, 24, 8
 
 find_peak_locations <- function(raw) {
     data <- raw[raw$V1 > 375 & raw$V1 < 420, ]
@@ -142,32 +141,7 @@ process_spectrum <- function(file, id){
     return(result)
 }
 
-pca_explained_var <- function(pca) {
-    explained_var <- pca$sdev ^ 2
-    explained_var_ratio <- explained_var / sum(explained_var)
-    
-    variance_df <- data.frame(
-        PC = factor(
-            paste0("PC", seq_along(explained_var_ratio)),
-            levels = paste0("PC", seq_along(explained_var_ratio))),
-        Variance = explained_var_ratio * 100
-    )
-    
-    variance_df$Cumulative <- cumsum(variance_df$Variance)
-    
-    ggplot(variance_df, aes(x = seq_along(Cumulative), y = Cumulative)) +
-        geom_line() +
-        geom_point(size = 2) +
-        scale_x_continuous(breaks = seq_len(nrow(variance_df))) +
-        labs(
-            title = "Cumulative Explained Variance",
-            x = "Number of Principal Components",
-            y = "Cumulative Variance Explained (%)"
-        ) +
-        theme_bw()
-}
-
-#compute_model <- function(){
+### MODEL CREATION ###
 
 filepath <- c(
     "data/training_data/background/07072025_1.txt",
@@ -176,15 +150,6 @@ filepath <- c(
     "data/training_data/background/07072025_4.txt",
     "data/training_data/background/07072025_5.txt",
     "data/training_data/background/07072025_6.txt",
-    #"data/training_data/monolayer/07012025_1.txt",
-    #"data/training_data/monolayer/07022025_1.txt",
-    #"data/training_data/monolayer/07022025_2.txt",
-    #"data/training_data/monolayer/07022025_3.txt",
-    #"data/training_data/monolayer/07022025_4.txt",
-    #"data/training_data/monolayer/07022025_5.txt",
-    #"data/training_data/monolayer/07022025_6.txt",
-    #"data/training_data/monolayer/07022025_7.txt",
-    #"data/training_data/monolayer/07022025_8.txt",
     "data/training_data/monolayer/07102025_1.txt",
     "data/training_data/monolayer/07102025_2.txt",
     "data/training_data/monolayer/07102025_3.txt",
@@ -213,7 +178,6 @@ filepath <- c(
     "data/training_data/monolayer/08132025_3.txt",
     "data/training_data/monolayer/08132025_4.txt",
     "data/training_data/monolayer/08132025_5.txt",
-    #"data/training_data/bilayer/07022025_1.txt",
     "data/training_data/bilayer/07152025_1.txt",
     "data/training_data/bilayer/07152025_2.txt",
     "data/training_data/bilayer/07152025_3.txt",
@@ -221,44 +185,27 @@ filepath <- c(
     "data/training_data/bilayer/08142025_1.txt",
     "data/training_data/bilayer/08142025_2.txt",
     "data/training_data/bilayer/08142025_3.txt"
-    )
+)
 
 # PCA ON RAW SPECTRA
 
 spectra <- lapply(filepath, fread)
+results <- bind_rows(lapply(seq_along(filepath), function(i) {
+    process_spectrum(filepath[i], i)
+}))
+
 intensity_matrix <- do.call(rbind, lapply(spectra, function(df){
-    df <- df[df$V1 > 350 & df$V1 < 450, ]
-    df$V2
-    }))
+    df_max <- max(df$V2)
+    df$V2 / df_max * 1000
+}))
 intensity_matrix <- t(scale(t(intensity_matrix), center = TRUE, scale = TRUE))
 raw_pca <- prcomp(intensity_matrix, center = TRUE, scale. = FALSE)
 raw_scores <- data.frame(raw_pca$x)
 labels <- as.factor(basename(dirname(filepath)))
 raw_scores$Layer <- labels
 
-ggplot(raw_scores, aes(PC1, PC4, colour = Layer)) +
-    geom_point(size = 4)
-
-# PCA ON ENGINEERED COMPONENTS
-
-results <- bind_rows(lapply(seq_along(filepath), function(i) {
-    process_spectrum(filepath[i], i)
-}))
-
-feature_vars <- results |>
-    dplyr::select(
-        diff_fit, fwhm1, fwhm2, 
-        area_ratio, intensity_ratio, snr, rmse, r_squared
-        )
-
-feature_pca <- prcomp(feature_vars, center = TRUE, scale. = TRUE)
 results <- results |>
     mutate(
-        #PC1 = feature_pca$x[,1],
-        #PC2 = feature_pca$x[,2],
-        #PC3 = feature_pca$x[,3],
-        #PC4 = feature_pca$x[,4],
-        #PC5 = feature_pca$x[,5],
         PC1 = raw_scores$PC1,
         PC2 = raw_scores$PC2,
         PC3 = raw_scores$PC3,
@@ -267,70 +214,117 @@ results <- results |>
     )
 results$Layer <- labels
 
-ggplot(results, aes(PC4, PC5, colour = Layer)) +
-    geom_point(size = 4) + 
-    theme_bw()
-
 feature_table <- results |>
     dplyr::select(
-        Layer, 
-        x_axis1, x_axis2,
-        diff_peak,
-        intensity_ratio,
-        mu1, mu2,
-        fwhm1, fwhm2, 
-        A1, A2,
-        area1, area2,
-        area_ratio, 
-        snr,
-        rmse,
-        r_squared,
-        diff_fit,
-        PC1,
-        PC2,
-        PC3,
-        PC4,
-        PC5
-        )
+        Layer, x_axis1, x_axis2, diff_peak, intensity_ratio, mu1, mu2,
+        fwhm1, fwhm2, A1, A2, area1, area2, area_ratio, snr, rmse,
+        r_squared, diff_fit, PC1, PC2, PC3, PC4, PC5
+    )
 
-scaled_features <- as.data.frame(scale(feature_table[,-c(1)]))
+scaled_features <- scale(feature_table[, -1])
+
+center <- attr(scaled_features,"scaled:center")
+scale  <- attr(scaled_features,"scaled:scale")
+
+scaled_features <- as.data.frame(scaled_features)
 scaled_features$Layer <- feature_table$Layer
 lda_model <- lda(
     Layer ~ 
-        (
-            x_axis1 + x_axis2 +
-            diff_peak + 
-            intensity_ratio +
-            mu1 + mu2 +
-            fwhm1 + fwhm2 + 
-            A1 + A2 +
-            area1 + area2 +
-            area_ratio + 
-            snr + 
-            rmse + 
-            r_squared + 
-            diff_fit + 
-            PC1 + 
-            PC2 + 
-            PC3 + 
-            PC4 + 
-            PC5
-        ),
-    data = scaled_features#,
-    #CV = TRUE
+        (x_axis1 + x_axis2 + diff_peak + intensity_ratio + mu1 + mu2 +
+        fwhm1 + fwhm2 + A1 + A2 + area1 + area2 + area_ratio + snr + 
+        rmse + r_squared + diff_fit + PC1 + PC2 + PC3 + PC4 + PC5)
+        ,
+    data = scaled_features
 )
-#}
 
-#lda_model <- compute_model()
-pred <- lda_model
-pred$class
-table(Actual = feature_table$Layer, Predicted = pred$class)
-mean(pred$class == feature_table$Layer)
+### LARGE AREA SCAN PROCESSING ###
 
+size <- 300
+file_path <- paste0(
+    "data/default LAS/", 
+    size, "x", size, 
+    "/Large Area Scan.csv"
+)
 
-#filepath <- paste0("data/training_data/monolayer/", "07102025_1", ".txt")
-#data <- fread(filepath, header = FALSE)
-#ggplot(data, aes(x = V1, y = V2)) +
-#    geom_line() + 
-#    theme_bw()
+compute_time <- round(0.00588271 * size ^ 2 + 2.21832, 2)
+paste0("Time to Compute: ", compute_time %/% 60, ":", (compute_time %% 60))
+raw <- fread(file_path, header = FALSE)
+data <- raw
 
+peak_summary <- find_peak_locations(data)
+gaussian_results <- auto_gaussian_summary(data, peak_summary)
+
+peak_summary <- peak_summary |>
+    mutate(
+        diff_peak = abs(x_axis1 - x_axis2),
+        intensity_ratio = intensity1 / intensity2,
+        intensity_ratio = ifelse(intensity_ratio > 1, intensity_ratio, 1/intensity_ratio)
+    ) |>
+    merge(gaussian_results, by = "id")
+
+heatmap_df <- peak_summary |>
+    dplyr::mutate(
+        x = ((id - 1) %% size) + 1,
+        y = ((id - 1) %/% size) + 1,
+        intensity_ratio = ifelse(intensity_ratio > 1.25, 1.25, intensity_ratio)
+    ) |>
+    dplyr::select(
+        id, x, y, x_axis1, x_axis2, diff_peak, mu1, mu2, diff_fit, 
+        intensity1, intensity2, intensity_ratio, A1, A2,  fwhm1, fwhm2, 
+        area1, area2, area_ratio, snr, rmse, r_squared)
+
+### PCA ANALYSIS ###
+spectra_matrix <- as.matrix(data[, -1])
+spectra_matrix <- apply(spectra_matrix, 2, function(x) {
+    x / max(x, na.rm = TRUE) * 1000
+})
+
+spectra_matrix <- t(scale(
+    t(spectra_matrix),
+    center = TRUE,
+    scale = TRUE
+))
+
+pca_scores <- predict(
+    raw_pca,
+    newdata = spectra_matrix
+)
+
+pca_scores <- as.data.frame(pca$x[, 1:5])
+pca_scores$id <- seq_len(nrow(pca_scores))
+heatmap_df <- cbind(heatmap_df, pca_scores[, 1:5])
+
+### MODEL APPLICATION ###
+large_area_features <- heatmap_df
+large_scaled <- scale(
+    large_area_features,
+    center = center,
+    scale = scale
+)
+
+predict(
+    lda_model,
+    newdata = as.data.frame(large_scaled)
+)
+
+prediction <- predict(
+    lda_model,
+    newdata = large_area_features
+)
+large_area_features$cluster <- prediction$class
+large_area_features <- large_area_features |>
+    mutate(
+        cluster = ifelse(cluster == "background", 0, ifelse(cluster == "monolayer", 1, 2))
+    )
+
+p <- ggplot(large_area_features, aes(x = x, y = y, fill = cluster)) +
+    geom_tile() +
+    coord_equal() +
+    scale_y_reverse() +
+    scale_fill_gradientn(colors = c("lightblue", "yellow", "red")) + 
+    labs(fill = "Clustering") + 
+    theme_bw()
+p
+ggplotly(p)
+
+write.csv(large_area_features, file = "../paraview_data/analysis_results.csv", row.names = FALSE)
