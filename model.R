@@ -6,7 +6,16 @@ library(pracma)
 library(data.table)
 library(minpack.lm)
 
-find_peak_locations <- function(raw) {
+normalize_data <- function(raw) {
+    cols <- 2:ncol(raw)
+    mat <- as.matrix(raw[, ..cols])
+    maxes <- apply(mat, 2, max, na.rm = TRUE)
+    mat <- sweep(mat, 2, maxes, "/") * 1000
+    raw[, (cols) := as.data.table(mat)]
+    return(raw)
+}
+
+find_peak_locations <- function(raw, cl) {
     data <- raw[raw$V1 > 375 & raw$V1 < 420, ]
     x_axis <- data$V1
     
@@ -14,53 +23,56 @@ find_peak_locations <- function(raw) {
     a1g_idx <- which(x_axis > 395 & x_axis < 420)
     results <- vector("list", ncol(data) - 1)
     
-    for (i in 2:ncol(data)) {
+    results <- parLapply(cl, 2:ncol(data), function(i) {
         intensity <- data[[i]]
-        intensity <- intensity / max(raw[[i]], na.rm = TRUE) * 1000
         
         peak1 <- e2g_idx[which.max(intensity[e2g_idx])]
         peak2 <- a1g_idx[which.max(intensity[a1g_idx])]
         
-        results[[i - 1]] <- tibble(
+        print(paste0("Spectrum ", (i - 1), " processed."))
+        
+        tibble::tibble(
             id = i - 1,
             x_axis1 = x_axis[peak1],
             intensity1 = intensity[peak1],
             x_axis2 = x_axis[peak2],
             intensity2 = intensity[peak2]
         )
-    }
-    peak_locations <- bind_rows(results)
+    })
+    
+    peak_locations <- dplyr::bind_rows(results)
     peak_locations
 }
 
-gaussian <- function(x, A, mu, sigma) {
-    A * exp(-(x - mu) ^ 2 / (2 * sigma ^ 2))
-}
-
-double_gaussian <- function(x, A1, mu1, sigma1, A2, mu2, sigma2, C) {
-    gaussian(x, A1, mu1, sigma1) + gaussian(x, A2, mu2, sigma2) + C
-}
-
-auto_gaussian_summary <- function(raw, peak_locations) {
-    data <- raw[raw$V1 > 365 & raw$V1 < 430, ]
+auto_gaussian_summary <- function(raw, peak_locations, cl) {
+    data <- raw[raw$V1 > 375 & raw$V1 < 420, ]
     x <- data$V1
-    results <- vector("list", nrow(peak_locations))
     
-    for (i in seq_len(nrow(peak_locations))) {
-        spectrum_id <- peak_locations$id[i]
-        y <- data[[spectrum_id + 1]]
-        spectrum_max <- max(raw[[spectrum_id + 1]], na.rm = TRUE)
-        y <- y / spectrum_max * 1000
+    results <- parLapply(cl, seq_len(nrow(peak_locations)), function(i) {
+        library(minpack.lm)
+        library(tibble)
+        library(dplyr)
         
-        A1_guess <- peak_locations$intensity1[i] / spectrum_max * 1000
-        A2_guess <- peak_locations$intensity2[i] / spectrum_max * 1000
+        gaussian <- function(x, A, mu, sigma) {
+            A * exp(-(x - mu) ^ 2 / (2 * sigma ^ 2))
+        }
+        double_gaussian <- function(x, A1, mu1, sigma1, A2, mu2, sigma2, C) {
+            gaussian(x, A1, mu1, sigma1) + gaussian(x, A2, mu2, sigma2) + C
+        }
+        
+        spectrum_id <- peak_locations$id[i]
+        
+        y <- data[[spectrum_id + 1]]
+        
+        A1_guess <- peak_locations$intensity1[i]
+        A2_guess <- peak_locations$intensity2[i]
         mu1_guess <- peak_locations$x_axis1[i]
         mu2_guess <- peak_locations$x_axis2[i]
         
-        error_return <- tibble(
+        error_return <- tibble::tibble(
             id = spectrum_id, mu1 = 0, mu2 = 0, fwhm1 = 0, fwhm2 = 0,
             A1 = 0, A2 = 0, area1 = 0, area2 = 0, area_ratio = 0,
-            snr = 0, rmse = 0, r_squared = 0, diff_fit = 0
+            snr = 0, rmse = 0, r_squared = 0, diff_fit = 0, status = "failed"
         )
         
         fit <- tryCatch({
@@ -71,7 +83,7 @@ auto_gaussian_summary <- function(raw, peak_locations) {
                       C = min(y)
                   ),
                   lower = c(0, 370, 0.5, 0, 390, 0.5, 0),
-                  upper = c(1500, 400, 20, 1500, 430, 20, 1500)
+                  upper = c(1100, 400, 20, 1100, 430, 20, 1100)
             )
         },
         error = function(e) {
@@ -80,8 +92,8 @@ auto_gaussian_summary <- function(raw, peak_locations) {
         })
         
         if (is.null(fit)) {
-            results[[i]] <- error_return
-            next
+            error_return$status <- "no fit"
+            return(error_return)
         }
         
         p <- coef(fit)
@@ -103,31 +115,34 @@ auto_gaussian_summary <- function(raw, peak_locations) {
         ss_tot <- sum((y - mean(y))^2)
         r_squared <- 1 - ss_res / ss_tot
         
-        if (r_squared < 0.90) {
-            results[[i]] <- error_return
-            print("r_squared below 90%")
-            next
+        if (r_squared < 0.8) {
+            error_return$status <- "r^2 too low"
+            error_return$r_squared <- r_squared
+            print("r_squared below 80%")
+            return(error_return)
         }
         
         noise <- sd(residuals)
         snr <- ifelse(noise == 0, Inf, max(y) / noise)
         
-        results[[i]] <- tibble(
+        tibble(
             id = spectrum_id, mu1 = p["mu1"], mu2 = p["mu2"],
             fwhm1 = fwhm1, fwhm2 = fwhm2, A1 = p["A1"], A2 = p["A2"],
             area1 = area1, area2 = area2, area_ratio = area_ratio,
             snr = snr, rmse = rmse, r_squared = r_squared,
-            diff_fit = abs(p["mu2"] - p["mu1"])
+            diff_fit = abs(p["mu2"] - p["mu1"]), status = "success"
         )
-    }
-    bind_rows(results)
+    })
+    
+    dplyr::bind_rows(results)
 }
 
-process_spectrum <- function(file, id){
+process_spectrum <- function(file, id, cl){
     raw <- fread(file, header = FALSE)
+    data <- normalize_data(raw)
     
-    peak <- find_peak_locations(raw)
-    fit  <- auto_gaussian_summary(raw, peak)
+    peak <- find_peak_locations(data, cl)
+    fit  <- auto_gaussian_summary(data, peak, cl)
     result <- peak |>
         mutate(
             diff_peak = abs(x_axis1 - x_axis2),
@@ -189,9 +204,12 @@ filepath <- c(
 
 # PCA ON RAW SPECTRA
 
+num_cores <- detectCores(logical = FALSE) - 1
+cl <- makeCluster(num_cores, type = "PSOCK")
+
 spectra <- lapply(filepath, fread)
 results <- bind_rows(lapply(seq_along(filepath), function(i) {
-    process_spectrum(filepath[i], i)
+    process_spectrum(filepath[i], i, cl)
 }))
 
 intensity_matrix <- do.call(rbind, lapply(spectra, function(df){
@@ -249,10 +267,11 @@ file_path <- paste0(
 compute_time <- round(0.00588271 * size ^ 2 + 2.21832, 2)
 paste0("Time to Compute: ", compute_time %/% 60, ":", (compute_time %% 60))
 raw <- fread(file_path, header = FALSE)
-data <- raw
+data <- normalize_data(raw)
 
-peak_summary <- find_peak_locations(data)
-gaussian_results <- auto_gaussian_summary(data, peak_summary)
+peak_summary <- find_peak_locations(data, cl)
+gaussian_results <- auto_gaussian_summary(data, peak_summary, cl)
+stopCluster(cl)
 
 peak_summary <- peak_summary |>
     mutate(
@@ -265,9 +284,8 @@ peak_summary <- peak_summary |>
 heatmap_df <- peak_summary |>
     dplyr::mutate(
         x = ((id - 1) %% size) + 1,
-        y = ((id - 1) %/% size) + 1,
-        intensity_ratio = ifelse(intensity_ratio > 1.25, 1.25, intensity_ratio)
-    ) |>
+        y = ((id - 1) %/% size) + 1
+        ) |>
     dplyr::select(
         id, x, y, x_axis1, x_axis2, diff_peak, mu1, mu2, diff_fit, 
         intensity1, intensity2, intensity_ratio, A1, A2,  fwhm1, fwhm2, 
@@ -278,19 +296,10 @@ spectra_matrix <- as.matrix(data[, -1])
 spectra_matrix <- apply(spectra_matrix, 2, function(x) {
     x / max(x, na.rm = TRUE) * 1000
 })
+spectra_matrix <- t(scale(t(spectra_matrix), center = TRUE, scale = TRUE))
+pca_scores <- predict(raw_pca, newdata = spectra_matrix)
 
-spectra_matrix <- t(scale(
-    t(spectra_matrix),
-    center = TRUE,
-    scale = TRUE
-))
-
-pca_scores <- predict(
-    raw_pca,
-    newdata = spectra_matrix
-)
-
-pca_scores <- as.data.frame(pca$x[, 1:5])
+pca_scores <- as.data.frame(pca_scores$x[, 1:5])
 pca_scores$id <- seq_len(nrow(pca_scores))
 heatmap_df <- cbind(heatmap_df, pca_scores[, 1:5])
 
@@ -302,14 +311,9 @@ large_scaled <- scale(
     scale = scale
 )
 
-predict(
-    lda_model,
-    newdata = as.data.frame(large_scaled)
-)
-
 prediction <- predict(
     lda_model,
-    newdata = large_area_features
+    newdata = as.data.frame(large_scaled)
 )
 large_area_features$cluster <- prediction$class
 large_area_features <- large_area_features |>

@@ -18,6 +18,15 @@ tidy_conversion <- function(data) {
        mutate(id = as.numeric(sub("V", "", id)) - 1)
 }
 
+normalize_data <- function(raw) {
+    cols <- 2:ncol(raw)
+    mat <- as.matrix(raw[, ..cols])
+    maxes <- apply(mat, 2, max, na.rm = TRUE)
+    mat <- sweep(mat, 2, maxes, "/") * 1000
+    raw[, (cols) := as.data.table(mat)]
+    return(raw)
+}
+
 find_peak_locations <- function(raw, cl) {
     data <- raw[raw$V1 > 375 & raw$V1 < 420, ]
     x_axis <- data$V1
@@ -28,8 +37,7 @@ find_peak_locations <- function(raw, cl) {
     
     results <- parLapply(cl, 2:ncol(data), function(i) {
         intensity <- data[[i]]
-        intensity <- intensity / max(raw[[i]], na.rm = TRUE) * 1000
-        
+
         peak1 <- e2g_idx[which.max(intensity[e2g_idx])]
         peak2 <- a1g_idx[which.max(intensity[a1g_idx])]
         
@@ -53,8 +61,12 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
     x <- data$V1
     
     results <- parLapply(cl, seq_len(nrow(peak_locations)), function(i) {
+        library(minpack.lm)
+        library(tibble)
+        library(dplyr)
+        
         gaussian <- function(x, A, mu, sigma) {
-            A * exp(-(x - mu)^2 / (2 * sigma^2))
+            A * exp(-(x - mu) ^ 2 / (2 * sigma ^ 2))
         }
         double_gaussian <- function(x, A1, mu1, sigma1, A2, mu2, sigma2, C) {
             gaussian(x, A1, mu1, sigma1) + gaussian(x, A2, mu2, sigma2) + C
@@ -63,9 +75,7 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
         spectrum_id <- peak_locations$id[i]
         
         y <- data[[spectrum_id + 1]]
-        spectrum_max <- max(raw[[spectrum_id + 1]], na.rm = TRUE)
-        y <- y / spectrum_max * 1000
-        
+
         A1_guess <- peak_locations$intensity1[i]
         A2_guess <- peak_locations$intensity2[i]
         mu1_guess <- peak_locations$x_axis1[i]
@@ -74,7 +84,7 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
         error_return <- tibble::tibble(
             id = spectrum_id, mu1 = 0, mu2 = 0, fwhm1 = 0, fwhm2 = 0,
             A1 = 0, A2 = 0, area1 = 0, area2 = 0, area_ratio = 0,
-            snr = 0, rmse = 0, r_squared = 0, diff_fit = 0
+            snr = 0, rmse = 0, r_squared = 0, diff_fit = 0, status = "failed"
         )
         
         fit <- tryCatch({
@@ -85,7 +95,7 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
                       C = min(y)
                   ),
                   lower = c(0, 370, 0.5, 0, 390, 0.5, 0),
-                  upper = c(1500, 400, 20, 1500, 430, 20, 1500)
+                  upper = c(1100, 400, 20, 1100, 430, 20, 1100)
             )
         },
         error = function(e) {
@@ -94,6 +104,7 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
         })
         
         if (is.null(fit)) {
+            error_return$status <- "no fit"
             return(error_return)
         }
         
@@ -116,8 +127,10 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
         ss_tot <- sum((y - mean(y))^2)
         r_squared <- 1 - ss_res / ss_tot
         
-        if (r_squared < 0.90) {
-            print("r_squared below 90%")
+        if (r_squared < 0.8) {
+            error_return$status <- "r^2 too low"
+            error_return$r_squared <- r_squared
+            print("r_squared below 80%")
             return(error_return)
         }
         
@@ -129,7 +142,7 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
             fwhm1 = fwhm1, fwhm2 = fwhm2, A1 = p["A1"], A2 = p["A2"],
             area1 = area1, area2 = area2, area_ratio = area_ratio,
             snr = snr, rmse = rmse, r_squared = r_squared,
-            diff_fit = abs(p["mu2"] - p["mu1"])
+            diff_fit = abs(p["mu2"] - p["mu1"]), status = "success"
         )
     })
     
@@ -149,7 +162,7 @@ file_path <- paste0(
 compute_time <- round(0.00588271 * size ^ 2 + 2.21832, 2)
 paste0("Time to Compute: ", compute_time %/% 60, ":", (compute_time %% 60))
 raw <- fread(file_path, header = FALSE)
-data <- raw
+data <- normalize_data(raw)
 
 peak_summary <- find_peak_locations(data, cl)
 gaussian_results <- auto_gaussian_summary(data, peak_summary, cl)
@@ -169,7 +182,7 @@ heatmap_df <- peak_summary |>
         y = ((id - 1) %/% size) + 1,
         #curve = intensity1 > 730 & intensity2 > 730,
         #diff_peak = ifelse(curve, diff_peak, 15),
-        #diff_peak = ifelse(diff_peak > 26 | diff_peak < 18, 15, diff_peak),
+        diff_peak = ifelse(diff_peak > 26 | diff_peak < 18, 0, diff_peak),
         #intensity_ratio = ifelse(curve, ratio, 0.9),
         intensity_ratio = ifelse(intensity_ratio > 1.25, 1.25, intensity_ratio)
         #mu1 = ifelse(curve, mu1, 0),
@@ -192,7 +205,7 @@ heatmap_df <- peak_summary |>
         area1, area2, area_ratio, snr, rmse, r_squared)#, curve)
 
 ### PCA ANALYSIS ###
-pca_data <- data[data$V1 > 375 & data$V1 < 420, ]
+pca_data <- data#[data$V1 > 375 & data$V1 < 420, ]
 spectra_matrix <- t(as.matrix(pca_data[ , -1]))
 spectra_scaled <- scale(spectra_matrix)
 pca <- prcomp(spectra_scaled, center = TRUE, scale. = TRUE)
@@ -206,10 +219,10 @@ heatmap_df <- cbind(heatmap_df, pca_scores[, 1:5])
 
 kmeans_vars <- heatmap_df |>
     dplyr::select(
-        diff_peak, diff_fit, mu1, mu2, intensity_ratio, A1, A2, fwhm1, fwhm2, 
-        area1, area2, area_ratio, snr, rmse, r_squared, PC1, PC2, PC3, PC4, PC5
-        ) |>
-    scale()
+        #diff_peak, diff_fit, mu1, mu2, intensity_ratio, A1, A2, fwhm1, fwhm2, 
+        #area1, area2, area_ratio, snr, rmse, r_squared, 
+        PC1, PC2, PC3, PC4, PC5
+        ) 
 
 cluster_num <- 4
 clustering_results <- kmeans(
