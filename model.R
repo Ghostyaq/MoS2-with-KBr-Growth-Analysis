@@ -5,6 +5,7 @@ library(tidyverse)
 library(pracma)
 library(data.table)
 library(minpack.lm)
+library(parallel)
 
 normalize_data <- function(raw) {
     cols <- 2:ncol(raw)
@@ -19,47 +20,45 @@ find_peak_locations <- function(raw, cl) {
     data <- raw[raw$V1 > 375 & raw$V1 < 420, ]
     x_axis <- data$V1
     
-    e2g_idx <- which(x_axis > 375 & x_axis < 395)
-    a1g_idx <- which(x_axis > 395 & x_axis < 420)
-    results <- vector("list", ncol(data) - 1)
+    # Matrix of spectra (rows = Raman shifts, columns = spectra)
+    spectra <- as.matrix(data[, -1])
+    max_vals <- apply(as.matrix(raw[, -1]), 2, max, na.rm = TRUE)
     
-    results <- parLapply(cl, 2:ncol(data), function(i) {
-        intensity <- data[[i]]
-        
-        peak1 <- e2g_idx[which.max(intensity[e2g_idx])]
-        peak2 <- a1g_idx[which.max(intensity[a1g_idx])]
-        
-        print(paste0("Spectrum ", (i - 1), " processed."))
-        
-        tibble::tibble(
-            id = i - 1,
-            x_axis1 = x_axis[peak1],
-            intensity1 = intensity[peak1],
-            x_axis2 = x_axis[peak2],
-            intensity2 = intensity[peak2]
-        )
-    })
+    e2g <- spectra[x_axis > 375 & x_axis < 395, , drop = FALSE]
+    a1g <- spectra[x_axis > 395 & x_axis < 420, , drop = FALSE]
+    peak1 <- max.col(t(e2g), ties.method = "first")
+    peak2 <- max.col(t(a1g), ties.method = "first")
+    e2g_rows <- which(x_axis > 375 & x_axis < 395)
+    a1g_rows <- which(x_axis > 395 & x_axis < 420)
+    peak1_global <- e2g_rows[peak1]
+    peak2_global <- a1g_rows[peak2]
     
-    peak_locations <- dplyr::bind_rows(results)
-    peak_locations
+    peak_locations <- data.frame(
+        id = seq_len(ncol(spectra)),
+        x_axis1 = x_axis[peak1_global],
+        intensity1 = spectra[cbind(peak1_global, seq_len(ncol(spectra)))],
+        x_axis2 = x_axis[peak2_global],
+        intensity2 = spectra[cbind(peak2_global, seq_len(ncol(spectra)))]
+    )
+}
+
+gaussian <- function(x, A, mu, sigma) {
+    A * exp(-(x - mu) ^ 2 / (2 * sigma ^ 2))
+}
+double_gaussian <- function(x, A1, mu1, sigma1, A2, mu2, sigma2, C) {
+    gaussian(x, A1, mu1, sigma1) + gaussian(x, A2, mu2, sigma2) + C
 }
 
 auto_gaussian_summary <- function(raw, peak_locations, cl) {
     data <- raw[raw$V1 > 375 & raw$V1 < 420, ]
     x <- data$V1
     
+    chunks <- split(
+        seq_len(nrow(peak_locations)),
+        cut(seq_len(nrow(peak_locations)), length(cl), labels = FALSE)
+    )
+    
     results <- parLapply(cl, seq_len(nrow(peak_locations)), function(i) {
-        library(minpack.lm)
-        library(tibble)
-        library(dplyr)
-        
-        gaussian <- function(x, A, mu, sigma) {
-            A * exp(-(x - mu) ^ 2 / (2 * sigma ^ 2))
-        }
-        double_gaussian <- function(x, A1, mu1, sigma1, A2, mu2, sigma2, C) {
-            gaussian(x, A1, mu1, sigma1) + gaussian(x, A2, mu2, sigma2) + C
-        }
-        
         spectrum_id <- peak_locations$id[i]
         
         y <- data[[spectrum_id + 1]]
@@ -87,7 +86,7 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
             )
         },
         error = function(e) {
-            cat("Spectrum:", spectrum_id, "\n", e$message, "\n\n")
+            message("Spectrum ", spectrum_id, ": ", e$message)
             NULL
         })
         
@@ -115,10 +114,9 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
         ss_tot <- sum((y - mean(y))^2)
         r_squared <- 1 - ss_res / ss_tot
         
-        if (r_squared < 0.8) {
+        if (r_squared < 0.85) {
             error_return$status <- "r^2 too low"
             error_return$r_squared <- r_squared
-            print("r_squared below 80%")
             return(error_return)
         }
         
@@ -144,7 +142,7 @@ process_spectrum <- function(file, id, cl){
     peak <- find_peak_locations(data, cl)
     fit  <- auto_gaussian_summary(data, peak, cl)
     result <- peak |>
-        mutate(
+        dplyr::mutate(
             diff_peak = abs(x_axis1 - x_axis2),
             intensity_ratio = intensity1 / intensity2,
             intensity_ratio = ifelse(intensity_ratio > 1, intensity_ratio, 1/intensity_ratio)
@@ -205,7 +203,19 @@ filepath <- c(
 # PCA ON RAW SPECTRA
 
 num_cores <- detectCores(logical = FALSE) - 1
-cl <- makeCluster(num_cores, type = "PSOCK")
+cl <- makeCluster(7, type = "PSOCK")
+
+# cores || user || system || elapsed
+# 1 || 15 || 3 || 433
+# 2 || 18 || 8 || 299
+# 4 || 10 || 6 || 247
+# 7 || 20 || 16 || 233
+
+clusterEvalQ(cl, {
+    library(minpack.lm) 
+    library(tibble)
+    })
+clusterExport(cl, c("gaussian", "double_gaussian"))
 
 spectra <- lapply(filepath, fread)
 results <- bind_rows(lapply(seq_along(filepath), function(i) {
@@ -236,7 +246,7 @@ feature_table <- results |>
     dplyr::select(
         Layer, x_axis1, x_axis2, diff_peak, intensity_ratio, mu1, mu2,
         fwhm1, fwhm2, A1, A2, area1, area2, area_ratio, snr, rmse,
-        r_squared, diff_fit, PC1, PC2, PC3, PC4, PC5
+        r_squared, diff_fit#, PC1, PC2, PC3, PC4, PC5
     )
 
 scaled_features <- scale(feature_table[, -1])
@@ -246,12 +256,14 @@ scale  <- attr(scaled_features,"scaled:scale")
 
 scaled_features <- as.data.frame(scaled_features)
 scaled_features$Layer <- feature_table$Layer
+lda_model_benchmark <- lda(
+    Layer ~ (diff_peak + A1 + A2 + area_ratio + fwhm1 + fwhm2),
+    data = scaled_features, CV = TRUE
+)
+
+table(Actual = feature_table$Layer, Predicted = lda_model_benchmark$class)
 lda_model <- lda(
-    Layer ~ 
-        (x_axis1 + x_axis2 + diff_peak + intensity_ratio + mu1 + mu2 +
-        fwhm1 + fwhm2 + A1 + A2 + area1 + area2 + area_ratio + snr + 
-        rmse + r_squared + diff_fit + PC1 + PC2 + PC3 + PC4 + PC5)
-        ,
+    Layer ~ (diff_peak + A1 + A2 + area_ratio + fwhm1 + fwhm2),
     data = scaled_features
 )
 
@@ -292,19 +304,20 @@ heatmap_df <- peak_summary |>
         area1, area2, area_ratio, snr, rmse, r_squared)
 
 ### PCA ANALYSIS ###
-spectra_matrix <- as.matrix(data[, -1])
-spectra_matrix <- apply(spectra_matrix, 2, function(x) {
-    x / max(x, na.rm = TRUE) * 1000
-})
-spectra_matrix <- t(scale(t(spectra_matrix), center = TRUE, scale = TRUE))
-pca_scores <- predict(raw_pca, newdata = spectra_matrix)
-
-pca_scores <- as.data.frame(pca_scores$x[, 1:5])
-pca_scores$id <- seq_len(nrow(pca_scores))
-heatmap_df <- cbind(heatmap_df, pca_scores[, 1:5])
+#spectra_matrix <- as.matrix(data[, -1])
+#spectra_matrix <- apply(spectra_matrix, 2, function(x) {
+#    x / max(x, na.rm = TRUE) * 1000
+#})
+#spectra_matrix <- t(scale(t(spectra_matrix), center = TRUE, scale = TRUE))
+#pca_scores <- predict(raw_pca, newdata = spectra_matrix)
+#
+#pca_scores <- as.data.frame(pca_scores$x[, 1:5])
+#pca_scores$id <- seq_len(nrow(pca_scores))
+#heatmap_df <- cbind(heatmap_df, pca_scores[, 1:5])
 
 ### MODEL APPLICATION ###
-large_area_features <- heatmap_df
+large_area_features <- heatmap_df |>
+    dplyr::select(-c(x, y, id, intensity1, intensity2))
 large_scaled <- scale(
     large_area_features,
     center = center,
@@ -320,6 +333,8 @@ large_area_features <- large_area_features |>
     mutate(
         cluster = ifelse(cluster == "background", 0, ifelse(cluster == "monolayer", 1, 2))
     )
+large_area_features$x <- heatmap_df$x
+large_area_features$y <- heatmap_df$y
 
 p <- ggplot(large_area_features, aes(x = x, y = y, fill = cluster)) +
     geom_tile() +
