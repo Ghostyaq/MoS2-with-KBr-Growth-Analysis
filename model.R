@@ -6,6 +6,8 @@ library(pracma)
 library(data.table)
 library(minpack.lm)
 library(parallel)
+library(glmnet)
+library(randomForest)
 
 normalize_data <- function(raw) {
     cols <- 2:ncol(raw)
@@ -203,13 +205,13 @@ filepath <- c(
 # PCA ON RAW SPECTRA
 
 num_cores <- detectCores(logical = FALSE) - 1
-cl <- makeCluster(7, type = "PSOCK")
+cl <- makeCluster(num_cores, type = "PSOCK")
 
 # cores || user || system || elapsed
 # 1 || 15 || 3 || 433
 # 2 || 18 || 8 || 299
 # 4 || 10 || 6 || 247
-# 7 || 20 || 16 || 233
+# 7 || 17 || 23 || 200
 
 clusterEvalQ(cl, {
     library(minpack.lm) 
@@ -217,55 +219,72 @@ clusterEvalQ(cl, {
     })
 clusterExport(cl, c("gaussian", "double_gaussian"))
 
+# -------------------------------- MODEL SETUP ------------------------------- #
 spectra <- lapply(filepath, fread)
 results <- bind_rows(lapply(seq_along(filepath), function(i) {
     process_spectrum(filepath[i], i, cl)
 }))
 
-intensity_matrix <- do.call(rbind, lapply(spectra, function(df){
-    df_max <- max(df$V2)
-    df$V2 / df_max * 1000
-}))
-intensity_matrix <- t(scale(t(intensity_matrix), center = TRUE, scale = TRUE))
-raw_pca <- prcomp(intensity_matrix, center = TRUE, scale. = FALSE)
-raw_scores <- data.frame(raw_pca$x)
 labels <- as.factor(basename(dirname(filepath)))
-raw_scores$Layer <- labels
-
-results <- results |>
-    mutate(
-        PC1 = raw_scores$PC1,
-        PC2 = raw_scores$PC2,
-        PC3 = raw_scores$PC3,
-        PC4 = raw_scores$PC4,
-        PC5 = raw_scores$PC5
-    )
 results$Layer <- labels
+map_vector <- c("background" = 0, "monolayer" = 0.7, "bilayer" = 1.5)
+results$thickness <- map_vector[as.character(results$Layer)]
 
 feature_table <- results |>
     dplyr::select(
-        Layer, x_axis1, x_axis2, diff_peak, intensity_ratio, mu1, mu2,
-        fwhm1, fwhm2, A1, A2, area1, area2, area_ratio, snr, rmse,
-        r_squared, diff_fit#, PC1, PC2, PC3, PC4, PC5
-    )
+        Layer, thickness, x_axis1, x_axis2, diff_peak, intensity_ratio, 
+        mu1, mu2, fwhm1, fwhm2, A1, A2, area1, area2, area_ratio, snr, rmse,
+        r_squared, diff_fit
+    ) |> 
+    dplyr::select(Layer, thickness, diff_peak, A1, A2, area_ratio, fwhm1, fwhm2, diff_fit)
 
-scaled_features <- scale(feature_table[, -1])
+scaled_features <- scale(feature_table[, -c(1, 2)])
 
 center <- attr(scaled_features,"scaled:center")
 scale  <- attr(scaled_features,"scaled:scale")
 
 scaled_features <- as.data.frame(scaled_features)
 scaled_features$Layer <- feature_table$Layer
+scaled_features$thickness <- feature_table$thickness
+
+### LINEAR DISCRIMINATORY ANALYSIS ###
 lda_model_benchmark <- lda(
-    Layer ~ (diff_peak + A1 + A2 + area_ratio + fwhm1 + fwhm2),
+    thickness ~ (diff_peak + A1 + A2 + area_ratio + fwhm1 + fwhm2 + diff_fit),
     data = scaled_features, CV = TRUE
 )
 
-table(Actual = feature_table$Layer, Predicted = lda_model_benchmark$class)
+table(Actual = feature_table$thickness, Predicted = lda_model_benchmark$class)
 lda_model <- lda(
-    Layer ~ (diff_peak + A1 + A2 + area_ratio + fwhm1 + fwhm2),
+    Layer ~ (diff_peak + A1 + A2 + area_ratio + fwhm1 + fwhm2 + diff_fit),
     data = scaled_features
 )
+
+### LINEAR REGRESSION ###
+linear_model <- lm(
+    thickness ~ (diff_peak + A1 + A2 + area_ratio + fwhm1 + fwhm2 + diff_fit),
+    data = scaled_features)
+
+### RIDGE REGRESSION ###
+X <- as.matrix(scaled_features[1:7])
+y <- scaled_features$thickness
+ridge_cv_model <- cv.glmnet(X, y, alpha = 0)
+best_lambda <- ridge_cv_model$lambda.min
+print(best_lambda)
+plot(ridge_cv_model)
+ridge_model <- glmnet(X, y, alpha = 0, lambda = best_lambda)
+coef(ridge_model)
+
+### RANDOM FOREST REGRESSION ###
+forest_model <- randomForest(
+    thickness ~ (diff_peak + A1 + A2 + area_ratio + fwhm1 + fwhm2 + diff_fit),
+    data = scaled_features, ntree = 500, mtry = 2, importance = TRUE
+)
+
+
+### SUPPORT VECTOR REGRESSION ###
+
+######### # NEURAL?! ########## 
+
 
 ### LARGE AREA SCAN PROCESSING ###
 
@@ -289,7 +308,11 @@ peak_summary <- peak_summary |>
     mutate(
         diff_peak = abs(x_axis1 - x_axis2),
         intensity_ratio = intensity1 / intensity2,
-        intensity_ratio = ifelse(intensity_ratio > 1, intensity_ratio, 1/intensity_ratio)
+        intensity_ratio = ifelse(
+            intensity_ratio > 1, 
+            intensity_ratio, 
+            1 / intensity_ratio
+            )
     ) |>
     merge(gaussian_results, by = "id")
 
@@ -303,47 +326,90 @@ heatmap_df <- peak_summary |>
         intensity1, intensity2, intensity_ratio, A1, A2,  fwhm1, fwhm2, 
         area1, area2, area_ratio, snr, rmse, r_squared)
 
-### PCA ANALYSIS ###
-#spectra_matrix <- as.matrix(data[, -1])
-#spectra_matrix <- apply(spectra_matrix, 2, function(x) {
-#    x / max(x, na.rm = TRUE) * 1000
-#})
-#spectra_matrix <- t(scale(t(spectra_matrix), center = TRUE, scale = TRUE))
-#pca_scores <- predict(raw_pca, newdata = spectra_matrix)
-#
-#pca_scores <- as.data.frame(pca_scores$x[, 1:5])
-#pca_scores$id <- seq_len(nrow(pca_scores))
-#heatmap_df <- cbind(heatmap_df, pca_scores[, 1:5])
-
-### MODEL APPLICATION ###
+### LDA MODEL APPLICATION ###
 large_area_features <- heatmap_df |>
-    dplyr::select(-c(x, y, id, intensity1, intensity2))
+    dplyr::select(diff_peak, A1, A2, area_ratio, fwhm1, fwhm2, diff_fit)
 large_scaled <- scale(
     large_area_features,
     center = center,
     scale = scale
 )
 
-prediction <- predict(
-    lda_model,
-    newdata = as.data.frame(large_scaled)
-)
-large_area_features$cluster <- prediction$class
-large_area_features <- large_area_features |>
-    mutate(
-        cluster = ifelse(cluster == "background", 0, ifelse(cluster == "monolayer", 1, 2))
-    )
+lda_pred <- predict(lda_model, newdata = as.data.frame(large_scaled))
+lm_pred <- predict(linear_model, newdata = as.data.frame(large_scaled))
+rr_pred <- predict(ridge_model, s = best_lambda, newx = large_scaled)
+rf_pred <- predict(forest_model, newdata = as.data.frame(large_scaled))
+
+large_area_features$cluster_lda <- lda_pred$class
+large_area_features$thickness_lda <- map_vector[as.character(lda_pred$class)] * 5
+large_area_features$thickness_lm <- as.numeric(lm_pred * 5)
+large_area_features$thickness_rr <- as.numeric(as.vector(rr_pred) * 5)
+large_area_features$thickness_rf <- rf_pred * 5
 large_area_features$x <- heatmap_df$x
 large_area_features$y <- heatmap_df$y
+large_area_features$height <- large_area_features$thickness_lm
 
-p <- ggplot(large_area_features, aes(x = x, y = y, fill = cluster)) +
+lm_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_lm)) +
+    geom_tile() +
+    coord_equal() +
+    scale_y_reverse() +
+    scale_fill_gradientn(
+        colors = c("purple", "blue", "orange", "red"),
+        limits = c(-25, 25), 
+        oob = squish, 
+        breaks = c(-25, 0, 2.5, 5, 25),
+        labels = c("≤ -5", "0", "0.5", "1", "5")
+    ) +
+    labs(fill = "Clustering") + 
+    theme_bw()
+ggplotly(lm_p)
+
+lda_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_lda)) +
     geom_tile() +
     coord_equal() +
     scale_y_reverse() +
     scale_fill_gradientn(colors = c("lightblue", "yellow", "red")) + 
     labs(fill = "Clustering") + 
     theme_bw()
-p
+ggplotly(lda_p)
+
+rr_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_rr)) +
+    geom_tile() +
+    coord_equal() +
+    scale_y_reverse() +
+    scale_fill_gradientn(
+        colors = c("purple", "blue", "orange", "red"),
+        limits = c(-0.05, 10), 
+        oob = squish, 
+        breaks = c(-0.05, 0, 2.5, 5, 10),
+        labels = c("≤ 0", "0", "0.5", "1", "2")
+    ) +
+    labs(fill = "Clustering") + 
+    theme_bw()
+ggplotly(rr_p)
+
+rf_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_rf)) +
+    geom_tile() +
+    coord_equal() +
+    scale_y_reverse() +
+    scale_fill_gradientn(colors = c("lightblue", "yellow", "red")) + 
+    labs(fill = "Clustering") + 
+    theme_bw()
+ggplotly(rf_p)
+
+p <- ggplot(a, aes(x = x, y = y, fill = goofy_mean)) +
+    geom_tile() +
+    coord_equal() +
+    scale_y_reverse() +
+    scale_fill_gradientn(
+        colors = c("purple", "blue", "orange", "red"),
+        limits = c(-25, 25), 
+        oob = squish, 
+        breaks = c(-25, 0, 2.5, 5, 25),
+        labels = c("≤ -5", "0", "0.5", "1", "5")
+    ) +
+    labs(fill = "Clustering") + 
+    theme_bw()
 ggplotly(p)
 
 write.csv(large_area_features, file = "../paraview_data/analysis_results.csv", row.names = FALSE)
