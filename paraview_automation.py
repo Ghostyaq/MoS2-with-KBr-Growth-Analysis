@@ -7,12 +7,12 @@ def get_column(reader, name):
     table = servermanager.Fetch(reader)
     return vtk_to_numpy(table.GetColumnByName(name))
 
-
 reader = CSVReader(
     FileName = ["/Users/mitchellhung/Desktop/Mitchell folder/High School Internships/paraview_data/analysis_results.csv"]
 )
-cluster = get_column(reader, "cluster")
-alpha = np.diff(np.unique(cluster)).min()
+interested_parameter = "height"
+height = get_column(reader, interested_parameter)
+alpha = np.diff(np.unique(height)).min()
 
 table = TableToPoints(
     Input = reader
@@ -20,14 +20,14 @@ table = TableToPoints(
 
 table.XColumn = "x"
 table.YColumn = "y"
-table.ZColumn = "cluster"
+table.ZColumn = interested_parameter
 
 view = GetActiveViewOrCreate("RenderView")
 
-Show(table, view)
+#Show(table, view)
 
-surface = Delaunay3D(Input = table)
-surface.Alpha = alpha * (2 ** (1/2)) * 0.9
+surface = Delaunay2D(Input = table)
+surface.Alpha = 0
 Show(surface, view)
 
 #ColorBy(display, ("POINTS", "cluster"))
