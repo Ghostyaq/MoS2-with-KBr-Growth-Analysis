@@ -8,10 +8,10 @@ Configuration parameters for MoS2 Raman thickness analysis.
 # FILE STRUCTURE
 # ============================================================
 
-TRAINING_DATA_DIR = "../data/training_data/"
-LAS_DATA_DIR = "../data/default LAS/"
-OUTPUT_DIR = "outputs/"
-PARAVIEW_OUTPUT = "../../paraview_data/analysis_results.csv"
+TRAINING_DATA_DIR = "python_application/data/training_data/"
+LAS_DATA_DIR = "python_application/data/default LAS/"
+MODEL_DIR = "python_application/models"
+PARAVIEW_OUTPUT = "python_application/data/results/analysis_results.csv"
 
 # ============================================================
 # LARGE AREA SCAN SETTINGS
@@ -32,6 +32,8 @@ NORMALIZATION_SCALE = 1000
 # ============================================================
 # RAMAN WINDOWS
 # ============================================================
+
+RAMAN_AXIS_COLUMN = 0
 
 # Full fitting region
 RAMAN_MIN = 375
@@ -108,6 +110,8 @@ RIDGE_ALPHA = 0
 # ============================================================
 
 RESERVE_CORES = 1
+TRAINING_WORKERS = 1
+PREDICTION_WORKERS = 6
 
 # ============================================================
 # OUTPUT / DEBUG
