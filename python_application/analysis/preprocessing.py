@@ -1,85 +1,99 @@
 """
 preprocessing.py
 
-Functions for loading and preprocessing MoS2 Raman spectra.
+Functions for loading and preprocessing Raman spectra.
 
 Equivalent R functions:
 - fread()
 - normalize_data()
-- Raman region filtering
 """
 
 import numpy as np
 import pandas as pd
+import time
 import config
+import os
 
 # ============================================================
-# DATA LOADING
+# LOADING
 # ============================================================
 
 def load_spectrum(file_path):
     """
-    Load a WITec exported Raman spectrum file.
+    Load a WITec Raman spectrum export.
 
     Expected format:
-        Column 0: Raman shift
-        Columns 1+: spectra
+        Column 0:
+            Raman shift
+
+        Columns 1+:
+            Individual spectra
 
     Parameters
         file_path : str
-            Path to txt/csv file
+            Path to txt/csv spectrum file
 
     Returns
-        dataframe : pandas.DataFrame
+        pd.DataFrame
     """
 
-    data = pd.read_csv(file_path, sep = None, engine = "python", header = None)
+    #data = pd.read_csv(
+    #    file_path, sep="\t", engine="python", header=None, dtype=np.float32
+    #)
+
+    print("Loading:", file_path)
+    print("Exists:", os.path.exists(file_path))
+    print("Is file:", os.path.isfile(file_path))
+
+    raw = np.loadtxt(
+        file_path,
+        delimiter="\t",
+        dtype=np.float32
+    )
+
+    data = pd.DataFrame(raw)
     return data
 
 # ============================================================
-# DATA VALIDATION
+# VALIDATION
 # ============================================================
 
 def validate_spectrum(data):
     """
-    Basic checks that data is formatted correctly.
+    Check that the Raman file has the expected format.
     """
 
     if data.shape[1] < 2:
         raise ValueError(
-            "Spectrum file must contain Raman axis + spectra columns."
+            "Spectrum must contain Raman axis and at least one spectrum."
         )
-        
-    if data.iloc[:,0].isna().any():
+
+    if data.iloc[:, 0].isna().any():
         raise ValueError(
             "Raman axis contains missing values."
         )
-
     return True
 
 # ============================================================
-# SPLIT AXIS AND SPECTRA
+# AXIS / SPECTRA SEPARATION
 # ============================================================
 
 def separate_axis(data):
     """
-    Separate Raman shift axis and intensity matrix.
+    Separate Raman shift axis from spectra matrix.
 
     Returns
-        raman_axis : numpy array
-        spectra : numpy array
-            rows = Raman shifts
-            columns = spectra
+        raman_axis : numpy.ndarray
+
+        spectra : numpy.ndarray
+
+            Shape:
+                rows = Raman shifts
+                columns = spectra
     """
 
-    raman_axis = data.iloc[:, config.RAMAN_AXIS_COLUMN].values
-
-    spectra = (
-        data
-        .drop(columns=config.RAMAN_AXIS_COLUMN)
-        .values
-    )
-
+    raman_axis = (data.iloc[:, config.RAMAN_AXIS_COLUMN].values)
+    spectra = (data.drop(columns=config.RAMAN_AXIS_COLUMN).values)
     return raman_axis, spectra
 
 # ============================================================
@@ -88,64 +102,70 @@ def separate_axis(data):
 
 def normalize_data(data):
     """
-    Normalize each Raman spectrum independently.
+    Normalize each spectrum independently.
 
     Equivalent R:
         maxes <- apply(mat,2,max)
-        mat <- sweep(mat,2,maxes,"/")*1000
+        mat <- sweep(mat, 2, maxes, "/") * 1000
 
     Returns
-        normalized dataframe
+        pd.DataFrame
     """
 
     raman_axis, spectra = separate_axis(data)
-    max_values = np.nanmax(spectra, axis = 0)
+    # Maximum intensity per spectrum
+    max_values = np.nanmax(spectra, axis=0)
     max_values[max_values == 0] = 1
     normalized = (spectra / max_values) * config.NORMALIZATION_SCALE
-    
     output = pd.DataFrame(normalized)
-    output.insert(0, "Raman Shift",raman_axis)
+    output.insert(0, "Raman Shift", raman_axis)
     return output
 
 # ============================================================
-# RAMAN REGION EXTRACTION
+# RAMAN WINDOW CROPPING
 # ============================================================
 
 def crop_raman_region(data):
     """
-    Keep only Raman shifts used for MoS2 analysis.
+    Restrict Raman spectrum to the MoS2 peaks.
 
     Equivalent R:
-        raw[raw$V1 > 375 & raw$V1 < 420, ]
+        raw[
+            raw$V1 > 375 &
+            raw$V1 < 420,
+        ]
     """
-
-    mask = (
-        (data.iloc[:,0] > config.RAMAN_MIN)
-        &
-        (data.iloc[:,0] < config.RAMAN_MAX)
-    )
-    return data.loc[mask].reset_index(drop=True)
+    raman_axis = data.iloc[:,0]
+    mask = ((raman_axis > config.RAMAN_MIN) & (raman_axis < config.RAMAN_MAX))
+    return (data.loc[mask].reset_index(drop=True))
 
 # ============================================================
-# COMPLETE PREPROCESSING PIPELINE
+# FULL PIPELINE
 # ============================================================
 
 def preprocess(file_path):
     """
-    Full preprocessing workflow.
+    Complete preprocessing pipeline.
 
     Steps:
-    1. Load file
-    2. Validate
-    3. Normalize
-    4. Crop Raman region
+        1. Load spectrum
+        2. Validate
+        3. Normalize
+        4. Crop Raman window
+
+    Parameters
+        file_path : str
 
     Returns
-        processed dataframe
+        pd.DataFrame
     """
-
+    start = time.time()
     raw = load_spectrum(file_path)
+    print(f"File reading took {time.time()-start:.2f} seconds")
     validate_spectrum(raw)
+    print(f"Validating took {time.time()-start:.2f} seconds")
     normalized = normalize_data(raw)
+    print(f"Processing took {time.time()-start:.2f} seconds")
     cropped = crop_raman_region(normalized)
+    print(f"Cropping took {time.time()-start:.2f} seconds")
     return cropped
