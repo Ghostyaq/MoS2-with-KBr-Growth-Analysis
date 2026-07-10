@@ -15,7 +15,6 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import curve_fit
 from multiprocessing import Pool, cpu_count
-from tqdm import tqdm
 # ============================================================
 # GAUSSIAN FUNCTIONS
 # ============================================================
