@@ -1,0 +1,41 @@
+name: Build MoS2 Analyzer
+
+on:
+  push:
+    tags:
+      - "v*"
+
+defaults:
+  run:
+    working-directory: python_application
+
+
+jobs:
+
+  build-macos:
+
+    runs-on: macos-latest
+
+    steps:
+
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Build app
+      run: |
+        pyinstaller gui.py \
+        --windowed \
+        --name MoS2_Analyzer \
+        --add-data "models:models" \
+        --add-data "data:data" \
+        --add-data "analysis:analysis"
