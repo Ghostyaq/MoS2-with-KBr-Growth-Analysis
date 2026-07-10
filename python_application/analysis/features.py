@@ -72,8 +72,6 @@ def create_model_features(feature_table):
 
     return (feature_table[columns].copy())
 
-
-
 # ============================================================
 # SCALING
 # ============================================================
@@ -98,3 +96,23 @@ def scale_features(features, scaler=None):
     )
     
     return scaled, scaler
+
+# ============================================================
+# SCAN COORDINATES
+# ============================================================
+
+def add_scan_coordinates(feature_table, rows, columns):
+    """
+    Add x/y scan coordinates based on spectrum ID.
+
+    Parameters
+        feature_table : DataFrame
+        scan_width : int
+
+    Returns
+        DataFrame
+    """
+    feature_table = feature_table.copy()
+    feature_table["x"] = feature_table["id"] % rows + 1
+    feature_table["y"] = feature_table["id"] // rows + 1
+    return feature_table

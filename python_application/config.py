@@ -4,14 +4,27 @@ config.py
 Configuration parameters for MoS2 Raman thickness analysis.
 """
 
+import sys 
+from pathlib import Path
+
 # ============================================================
 # FILE STRUCTURE
 # ============================================================
 
-TRAINING_DATA_DIR = "python_application/data/training_data/"
-LAS_DATA_DIR = "python_application/data/default LAS/"
-MODEL_DIR = "python_application/models"
-PARAVIEW_OUTPUT = "python_application/data/results/analysis_results.csv"
+def resource_path(relative):
+    if hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / relative
+    return Path(__file__).parent / relative
+
+
+BASE_DIR = resource_path(".")
+
+MODEL_DIR = resource_path("models")
+DATA_DIR = resource_path("data")
+
+RESULTS_DIR = DATA_DIR / "results"
+TRAINING_DIR = DATA_DIR / "training_data"
+SCAN_DIR = DATA_DIR / "large_area_scans"
 
 # ============================================================
 # LARGE AREA SCAN SETTINGS
@@ -111,7 +124,7 @@ RIDGE_ALPHA = 0
 
 RESERVE_CORES = 1
 TRAINING_WORKERS = 1
-PREDICTION_WORKERS = 6
+PREDICTION_WORKERS = 6 # set to None for All Cores - RESERVE_CORES
 
 # ============================================================
 # OUTPUT / DEBUG

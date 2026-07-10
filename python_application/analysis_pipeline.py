@@ -1,7 +1,7 @@
 """
-main.py
+analysis_pipeline.py
 
-Main execution pipeline for MoS2 Raman analysis.
+Execution pipeline for MoS2 Raman analysis.
 
 Workflow:
 
@@ -223,6 +223,10 @@ def predict_pipeline(
     feature_table = generate_features(
         spectrum_file, workers, status_callback, progress_callback
         )
+    feature_table = features.add_scan_coordinates(
+        feature_table, config.LAS_ROWS, config.LAS_COLS
+        )
+    
     model_features = (features.create_model_features(feature_table))
     trained_models = (models.load_models())
 
@@ -245,8 +249,8 @@ def save_results(results, status_callback, filename="analysis_results.csv"):
     Save final analysis table.
     """
 
-    os.makedirs("python_application/data/results", exist_ok=True)
-    path = os.path.join("python_application/data/results", filename)
+    os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+    path = os.path.join(config.OUTPUT_DIR, filename)
 
     results.to_csv(path, index=False)
     status(f"\nSaved: {path}", status_callback)

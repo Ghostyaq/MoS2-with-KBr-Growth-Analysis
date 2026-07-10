@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import time
 import config
+import os
 
 # ============================================================
 # LOADING
@@ -39,6 +40,10 @@ def load_spectrum(file_path):
     #data = pd.read_csv(
     #    file_path, sep="\t", engine="python", header=None, dtype=np.float32
     #)
+
+    print("Loading:", file_path)
+    print("Exists:", os.path.exists(file_path))
+    print("Is file:", os.path.isfile(file_path))
 
     raw = np.loadtxt(
         file_path,

@@ -19,6 +19,7 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.linear_model import LinearRegression, RidgeCV
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import cross_val_score
+from pathlib import Path
 
 # ============================================================
 # TRAINING DATA PREPARATION
@@ -156,12 +157,17 @@ def predict_models(models, features):
     Equivalent R:
         predict(model, newdata)
     """
-
+    probs = models["lda"].predict_proba(features)
     predictions = pd.DataFrame()
-    predictions["lda_class"] = (models["lda"].predict(features))
+
     predictions["linear_thickness"] = (models["linear"].predict(features))
     predictions["ridge_thickness"] = (models["ridge"].predict(features))
     predictions["rf_thickness"] = (models["random_forest"].predict(features))
+    predictions["lda_class"] = (models["lda"].predict(features))
+    for i, label in enumerate(models["lda"].classes_):
+        predictions[f"lda_{label}_prob"] = probs[:, i]
+
+    predictions["lda_confidence"] = probs.max(axis=1)
     return predictions
 
 # ============================================================
@@ -172,7 +178,6 @@ def save_models(models, folder=config.MODEL_DIR):
     """
     Save trained models.
     """
-
     os.makedirs(folder, exist_ok=True)
     for name, model in models.items():
         joblib.dump(model, f"{folder}/{name}.pkl")
@@ -181,11 +186,13 @@ def load_models(folder=config.MODEL_DIR):
     """
     Load saved models.
     """
-
     models = {}
-    for file in os.listdir(folder):
-        if file.endswith(".pkl"):
-            name = file.replace(".pkl", "")
-            models[name] = joblib.load(f"{folder}/{file}")
+
+    folder = Path(folder)
+
+    for file in folder.iterdir():
+        if file.suffix == ".pkl":
+            name = file.stem
+            models[name] = joblib.load(file)
 
     return models
