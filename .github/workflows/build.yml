@@ -49,3 +49,45 @@ jobs:
       with:
         name: MoS2_Analyzer_macOS
         path: python_application/dist/MoS2_Analyzer_macOS.zip
+    
+      build-windows:
+
+    runs-on: windows-latest
+
+    steps:
+
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install dependencies
+      run: |
+        pip install -r python_application/requirements.txt
+        pip install pyinstaller
+
+    - name: Build app
+      working-directory: python_application
+      run: |
+        pyinstaller gui.py `
+          --windowed `
+          --name MoS2_Analyzer `
+          --add-data "models;models" `
+          --add-data "data;data" `
+          --add-data "analysis;analysis"
+
+    - name: Zip application
+      working-directory: python_application
+      run: |
+        Compress-Archive `
+          -Path dist/MoS2_Analyzer `
+          -DestinationPath dist/MoS2_Analyzer_Windows.zip
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: MoS2_Analyzer_Windows
+        path: python_application/dist/MoS2_Analyzer_Windows.zip
