@@ -39,3 +39,14 @@ jobs:
         --add-data "models:models" \
         --add-data "data:data" \
         --add-data "analysis:analysis"
+
+        - name: Zip application
+      run: |
+        cd dist
+        zip -r MoS2_Analyzer_macOS.zip MoS2_Analyzer.app
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: MoS2_Analyzer_macOS
+        path: python_application/dist/MoS2_Analyzer_macOS.zip
