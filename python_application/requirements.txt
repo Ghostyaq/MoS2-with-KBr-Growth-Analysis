@@ -2,7 +2,6 @@ joblib
 matplotlib
 numpy
 pandas
-paraview
 scipy
 scikit-learn
 vtk
