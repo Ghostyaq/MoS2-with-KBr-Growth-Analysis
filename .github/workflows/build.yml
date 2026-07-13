@@ -50,7 +50,7 @@ jobs:
         name: MoS2_Analyzer_macOS
         path: python_application/dist/MoS2_Analyzer_macOS.zip
     
-      build-windows:
+  build-windows:
 
     runs-on: windows-latest
 
