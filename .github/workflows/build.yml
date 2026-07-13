@@ -9,7 +9,6 @@ defaults:
   run:
     working-directory: python_application
 
-
 jobs:
 
   build-macos:
@@ -40,7 +39,7 @@ jobs:
         --add-data "data:data" \
         --add-data "analysis:analysis"
 
-        - name: Zip application
+    - name: Zip application
       run: |
         cd dist
         zip -r MoS2_Analyzer_macOS.zip MoS2_Analyzer.app
