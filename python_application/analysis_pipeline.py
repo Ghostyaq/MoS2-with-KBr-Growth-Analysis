@@ -117,7 +117,7 @@ def generate_features_from_files(
 # TRAINING
 # ============================================================
 
-def find_training_files(training_folder=config.TRAINING_DATA_DIR):
+def find_training_files(training_folder=config.TRAINING_DIR):
     """
     Recursively locate every training spectrum.
 
@@ -249,8 +249,8 @@ def save_results(results, status_callback, filename="analysis_results.csv"):
     Save final analysis table.
     """
 
-    os.makedirs(config.OUTPUT_DIR, exist_ok=True)
-    path = os.path.join(config.OUTPUT_DIR, filename)
+    os.makedirs(config.RESULTS_DIR, exist_ok=True)
+    path = os.path.join(config.RESULTS_DIR, filename)
 
     results.to_csv(path, index=False)
     status(f"\nSaved: {path}", status_callback)
