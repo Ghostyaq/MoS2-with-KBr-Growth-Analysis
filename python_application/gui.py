@@ -3,6 +3,7 @@ import pandas as pd
 from tkinter import filedialog, messagebox
 
 from analysis_pipeline import predict_pipeline, save_results
+from multiprocessing import freeze_support, set_start_method
 from pathlib import Path
 from tkinter import ttk
 import config
@@ -152,6 +153,13 @@ def startup_check():
     return errors
 
 if __name__ == "__main__":
+    freeze_support()
+
+    try:
+        set_start_method("spawn")
+    except:
+        pass
+
     root = tk.Tk()
     app = RamanGUI(root)
     root.mainloop()

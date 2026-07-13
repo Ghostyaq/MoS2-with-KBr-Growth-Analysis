@@ -162,7 +162,7 @@ def predict_models(models, features):
 
     predictions["linear_thickness"] = (models["linear"].predict(features))
     predictions["ridge_thickness"] = (models["ridge"].predict(features))
-    predictions["rf_thickness"] = (models["random_forest"].predict(features))
+    #predictions["rf_thickness"] = (models["random_forest"].predict(features))
     predictions["lda_class"] = (models["lda"].predict(features))
     for i, label in enumerate(models["lda"].classes_):
         predictions[f"lda_{label}_prob"] = probs[:, i]
