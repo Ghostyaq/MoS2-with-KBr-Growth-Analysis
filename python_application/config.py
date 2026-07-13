@@ -124,7 +124,7 @@ RIDGE_ALPHA = 0
 
 RESERVE_CORES = 1
 TRAINING_WORKERS = 1
-PREDICTION_WORKERS = 1 # set to None for All Cores - RESERVE_CORES
+PREDICTION_WORKERS = None # set to None for All Cores - RESERVE_CORES
 
 # ============================================================
 # OUTPUT / DEBUG

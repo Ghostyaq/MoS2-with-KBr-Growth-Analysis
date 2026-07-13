@@ -150,24 +150,34 @@ def train_all_models(feature_table, feature_columns):
 # PREDICTION
 # ============================================================
 
-def predict_models(models, features):
+def predict_models(models, features, status_callback, status):
     """
     Apply models to new spectra.
 
     Equivalent R:
         predict(model, newdata)
     """
-    probs = models["lda"].predict_prob(features)
-    predictions = pd.DataFrame()
+    status("Start probability prediction", status_callback)
+    probs = models["lda"].predict_proba(features)
+    status("Ended probability prediction", status_callback)
 
+    predictions = pd.DataFrame()
+    
+    status("Start linear prediction", status_callback)
     predictions["linear_thickness"] = (models["linear"].predict(features))
+    status("Start ridge prediction", status_callback)
     predictions["ridge_thickness"] = (models["ridge"].predict(features))
+    status("Start rf prediction", status_callback)
     predictions["rf_thickness"] = (models["random_forest"].predict(features))
+    status("Start lda class", status_callback)
     predictions["lda_class"] = (models["lda"].predict(features))
+    status("Start enumerating", status_callback)
     for i, label in enumerate(models["lda"].classes_):
         predictions[f"lda_{label}_prob"] = probs[:, i]
 
+    status("Start lda confidence", status_callback)
     predictions["lda_confidence"] = probs.max(axis=1)
+    status("Finished model predictions", status_callback)
     return predictions
 
 # ============================================================

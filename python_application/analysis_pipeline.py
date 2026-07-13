@@ -234,7 +234,7 @@ def predict_pipeline(
     scaled_features, _ = (features.scale_features(model_features))
 
     status("Predicting...", status_callback)
-    predictions = (models.predict_models(trained_models, scaled_features))
+    predictions = (models.predict_models(trained_models, scaled_features, status_callback, status))
 
     results = pd.concat([feature_table, predictions], axis=1)
     return results
