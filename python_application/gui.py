@@ -125,8 +125,8 @@ def startup_check():
     # Required folders
     required_dirs = [
         config.MODEL_DIR,
-        config.TRAINING_DATA_DIR,
-        config.OUTPUT_DIR
+        config.TRAINING_DIR,
+        config.RESULTS_DIR
         ]
 
     for directory in required_dirs:
