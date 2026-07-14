@@ -131,8 +131,8 @@ def crop_raman_region(data):
 
     Equivalent R:
         raw[
-            raw$V1 > 375 &
-            raw$V1 < 420,
+            raw$V1 > 365 &
+            raw$V1 < 430,
         ]
     """
     raman_axis = data.iloc[:,0]

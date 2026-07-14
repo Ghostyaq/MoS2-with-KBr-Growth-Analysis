@@ -2,7 +2,7 @@ import tkinter as tk
 import pandas as pd
 from tkinter import filedialog, messagebox
 
-from analysis_pipeline import predict_pipeline, save_results
+from analysis_pipeline import train_pipeline, predict_pipeline, save_results
 from multiprocessing import freeze_support, set_start_method
 from pathlib import Path
 from tkinter import ttk

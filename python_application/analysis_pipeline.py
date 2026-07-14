@@ -153,7 +153,7 @@ def create_training_labels(file_list):
 
         elif "bilayer" in file.lower():
             layer = "Bilayer"
-            thickness = 1.4
+            thickness = 1.5
 
         else:
             raise ValueError(f"Cannot determine layer type from {file}")
@@ -168,7 +168,7 @@ def create_training_labels(file_list):
     return pd.DataFrame(labels)
 
 def train_pipeline(
-        training_files, status_callback=None, progress_callback=None
+        training_files=find_training_files(), status_callback=None, progress_callback=None
         ):
     """
     Train all models.
@@ -189,7 +189,7 @@ def train_pipeline(
         training_files, config.TRAINING_WORKERS
         )
     labels = create_training_labels(training_files)
-    feature_table = feature_table.merge(labels, on="id")    
+    feature_table = feature_table.merge(labels, on="id") 
     model_features = (features.create_model_features(feature_table))
     scaled_features, scaler = (features.scale_features(model_features))
     
