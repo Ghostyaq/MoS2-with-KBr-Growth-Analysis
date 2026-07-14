@@ -8,6 +8,8 @@ library(minpack.lm)
 library(parallel)
 library(glmnet)
 library(randomForest)
+library(e1071)
+library(pls)
 
 normalize_data <- function(raw) {
     cols <- 2:ncol(raw)
@@ -227,7 +229,7 @@ results <- bind_rows(lapply(seq_along(filepath), function(i) {
 
 labels <- as.factor(basename(dirname(filepath)))
 results$Layer <- labels
-map_vector <- c("background" = 0, "monolayer" = 0.7, "bilayer" = 1.5)
+map_vector <- c("background" = 0, "monolayer" = 0.7, "bilayer" = 2.02)
 results$thickness <- map_vector[as.character(results$Layer)]
 
 feature_table <- results |>
@@ -235,8 +237,8 @@ feature_table <- results |>
         Layer, thickness, x_axis1, x_axis2, diff_peak, intensity_ratio, 
         mu1, mu2, fwhm1, fwhm2, A1, A2, area1, area2, area_ratio, snr, rmse,
         r_squared, diff_fit
-    ) |> 
-    dplyr::select(Layer, thickness, diff_peak, A1, A2, area_ratio, fwhm1, fwhm2, diff_fit)
+    )# |> 
+    #dplyr::select(Layer, thickness, diff_peak, A1, A2, area_ratio, fwhm1, fwhm2, diff_fit)
 
 scaled_features <- scale(feature_table[, -c(1, 2)])
 
@@ -282,6 +284,21 @@ forest_model <- randomForest(
 
 
 ### SUPPORT VECTOR REGRESSION ###
+svr_model <- svm(
+    thickness ~ (diff_peak + A1 + A2 + area_ratio + fwhm1 + fwhm2 + diff_fit),
+    data = scaled_features, type = "eps-regression", kernel = "radial"
+)
+
+### PARTIAL LINEAR REGRESSION ###
+plsr_model <- plsr(
+    thickness ~ 
+        diff_peak + intensity_ratio + mu1 + mu2 + fwhm1 + fwhm2 + A1 + A2 + 
+        area1 + area2 + area_ratio + snr + rmse + diff_fit,
+    data = scaled_features,
+    validation = "LOO",
+    scale = FALSE
+)
+validationplot(plsr_model, val.type = "RMSEP")
 
 ######### # NEURAL?! ########## 
 
@@ -328,8 +345,17 @@ heatmap_df <- peak_summary |>
 
 ### LDA MODEL APPLICATION ###
 large_area_features <- heatmap_df |>
-    dplyr::select(diff_peak, A1, A2, area_ratio, fwhm1, fwhm2, diff_fit)
+    dplyr::select(
+       x_axis1, x_axis2, diff_peak, intensity_ratio, 
+        mu1, mu2, fwhm1, fwhm2, A1, A2, area1, area2, area_ratio, snr, rmse,
+        r_squared, diff_fit
+    )
 large_scaled <- scale(
+    large_area_features,
+    center = center,
+    scale = scale
+)[, c(3, 7:10, 13, 17)]
+large_scaled_plsr <- scale(
     large_area_features,
     center = center,
     scale = scale
@@ -339,15 +365,25 @@ lda_pred <- predict(lda_model, newdata = as.data.frame(large_scaled))
 lm_pred <- predict(linear_model, newdata = as.data.frame(large_scaled))
 rr_pred <- predict(ridge_model, s = best_lambda, newx = large_scaled)
 rf_pred <- predict(forest_model, newdata = as.data.frame(large_scaled))
+vr_pred <- predict(svr_model, newdata = as.data.frame(large_scaled))
+pl_pred <- predict(plsr_model, newdata = as.data.frame(large_scaled_plsr), ncomp = 6)
 
 large_area_features$cluster_lda <- lda_pred$class
 large_area_features$thickness_lda <- map_vector[as.character(lda_pred$class)] * 5
 large_area_features$thickness_lm <- as.numeric(lm_pred * 5)
 large_area_features$thickness_rr <- as.numeric(as.vector(rr_pred) * 5)
 large_area_features$thickness_rf <- rf_pred * 5
+large_area_features$thickness_vr <- as.numeric(vr_pred) * 5
+large_area_features$thickness_pl <- as.numeric(pl_pred) * 5
 large_area_features$x <- heatmap_df$x
 large_area_features$y <- heatmap_df$y
-large_area_features$height <- large_area_features$thickness_lm
+large_area_features <- large_area_features |>
+    mutate(
+        height = (
+            thickness_lda + thickness_lm + thickness_rr + 
+            thickness_rf + thickness_rf + thickness_pl
+            ) / 6
+    )
 
 lm_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_lm)) +
     geom_tile() +
@@ -396,6 +432,15 @@ rf_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_rf)) +
     labs(fill = "Clustering") + 
     theme_bw()
 ggplotly(rf_p)
+
+vr_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_vr)) +
+    geom_tile() +
+    coord_equal() +
+    scale_y_reverse() +
+    scale_fill_gradientn(colors = c("lightblue", "yellow", "red")) + 
+    labs(fill = "Clustering") + 
+    theme_bw()
+ggplotly(vr_p)
 
 p <- ggplot(a, aes(x = x, y = y, fill = goofy_mean)) +
     geom_tile() +
