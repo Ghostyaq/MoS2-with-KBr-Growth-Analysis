@@ -1,5 +1,5 @@
 rm(list = ls())
-load("base_analysis.RData")
+load("data/RData/base_analysis.RData")
 
 library(MASS)
 library(pls)
