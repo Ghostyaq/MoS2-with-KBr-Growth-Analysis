@@ -10,153 +10,9 @@ library(glmnet)
 library(randomForest)
 library(e1071)
 library(pls)
+library(scales)
 
-normalize_data <- function(raw) {
-    cols <- 2:ncol(raw)
-    mat <- as.matrix(raw[, ..cols])
-    maxes <- apply(mat, 2, max, na.rm = TRUE)
-    mat <- sweep(mat, 2, maxes, "/") * 1000
-    raw[, (cols) := as.data.table(mat)]
-    return(raw)
-}
-
-find_peak_locations <- function(raw, cl) {
-    data <- raw[raw$V1 > 375 & raw$V1 < 420, ]
-    x_axis <- data$V1
-    
-    # Matrix of spectra (rows = Raman shifts, columns = spectra)
-    spectra <- as.matrix(data[, -1])
-    max_vals <- apply(as.matrix(raw[, -1]), 2, max, na.rm = TRUE)
-    
-    e2g <- spectra[x_axis > 375 & x_axis < 395, , drop = FALSE]
-    a1g <- spectra[x_axis > 395 & x_axis < 420, , drop = FALSE]
-    peak1 <- max.col(t(e2g), ties.method = "first")
-    peak2 <- max.col(t(a1g), ties.method = "first")
-    e2g_rows <- which(x_axis > 375 & x_axis < 395)
-    a1g_rows <- which(x_axis > 395 & x_axis < 420)
-    peak1_global <- e2g_rows[peak1]
-    peak2_global <- a1g_rows[peak2]
-    
-    peak_locations <- data.frame(
-        id = seq_len(ncol(spectra)),
-        x_axis1 = x_axis[peak1_global],
-        intensity1 = spectra[cbind(peak1_global, seq_len(ncol(spectra)))],
-        x_axis2 = x_axis[peak2_global],
-        intensity2 = spectra[cbind(peak2_global, seq_len(ncol(spectra)))]
-    )
-}
-
-gaussian <- function(x, A, mu, sigma) {
-    A * exp(-(x - mu) ^ 2 / (2 * sigma ^ 2))
-}
-double_gaussian <- function(x, A1, mu1, sigma1, A2, mu2, sigma2, C) {
-    gaussian(x, A1, mu1, sigma1) + gaussian(x, A2, mu2, sigma2) + C
-}
-
-auto_gaussian_summary <- function(raw, peak_locations, cl) {
-    data <- raw[raw$V1 > 375 & raw$V1 < 420, ]
-    x <- data$V1
-    
-    chunks <- split(
-        seq_len(nrow(peak_locations)),
-        cut(seq_len(nrow(peak_locations)), length(cl), labels = FALSE)
-    )
-    
-    results <- parLapply(cl, seq_len(nrow(peak_locations)), function(i) {
-        spectrum_id <- peak_locations$id[i]
-        
-        y <- data[[spectrum_id + 1]]
-        
-        A1_guess <- peak_locations$intensity1[i]
-        A2_guess <- peak_locations$intensity2[i]
-        mu1_guess <- peak_locations$x_axis1[i]
-        mu2_guess <- peak_locations$x_axis2[i]
-        
-        error_return <- tibble::tibble(
-            id = spectrum_id, mu1 = 0, mu2 = 0, fwhm1 = 0, fwhm2 = 0,
-            A1 = 0, A2 = 0, area1 = 0, area2 = 0, area_ratio = 0,
-            snr = 0, rmse = 0, r_squared = 0, diff_fit = 0, status = "failed"
-        )
-        
-        fit <- tryCatch({
-            nlsLM(y ~ double_gaussian(x, A1, mu1, sigma1, A2, mu2, sigma2, C),
-                  start = list(
-                      A1 = A1_guess, mu1 = mu1_guess, sigma1 = 3,
-                      A2 = A2_guess, mu2 = mu2_guess, sigma2 = 3,
-                      C = min(y)
-                  ),
-                  lower = c(0, 370, 0.5, 0, 390, 0.5, 0),
-                  upper = c(1100, 400, 20, 1100, 430, 20, 1100)
-            )
-        },
-        error = function(e) {
-            message("Spectrum ", spectrum_id, ": ", e$message)
-            NULL
-        })
-        
-        if (is.null(fit)) {
-            error_return$status <- "no fit"
-            return(error_return)
-        }
-        
-        p <- coef(fit)
-        fwhm1 <- 2.35482 * p["sigma1"]
-        fwhm2 <- 2.35482 * p["sigma2"]
-        
-        area1 <- p["A1"] * p["sigma1"] * sqrt(2 * pi)
-        area2 <- p["A2"] * p["sigma2"] * sqrt(2 * pi)
-        area_ratio <- area1 / area2
-        
-        fitted_y <- double_gaussian(
-            x, p["A1"], p["mu1"], p["sigma1"], 
-            p["A2"], p["mu2"], p["sigma2"], p["C"]
-        )
-        residuals <- y - fitted_y
-        rmse <- sqrt(mean(residuals^2))
-        
-        ss_res <- sum(residuals^2)
-        ss_tot <- sum((y - mean(y))^2)
-        r_squared <- 1 - ss_res / ss_tot
-        
-        if (r_squared < 0.85) {
-            error_return$status <- "r^2 too low"
-            error_return$r_squared <- r_squared
-            return(error_return)
-        }
-        
-        noise <- sd(residuals)
-        snr <- ifelse(noise == 0, Inf, max(y) / noise)
-        
-        tibble(
-            id = spectrum_id, mu1 = p["mu1"], mu2 = p["mu2"],
-            fwhm1 = fwhm1, fwhm2 = fwhm2, A1 = p["A1"], A2 = p["A2"],
-            area1 = area1, area2 = area2, area_ratio = area_ratio,
-            snr = snr, rmse = rmse, r_squared = r_squared,
-            diff_fit = abs(p["mu2"] - p["mu1"]), status = "success"
-        )
-    })
-    
-    dplyr::bind_rows(results)
-}
-
-process_spectrum <- function(file, id, cl){
-    raw <- fread(file, header = FALSE)
-    data <- normalize_data(raw)
-    
-    peak <- find_peak_locations(data, cl)
-    fit  <- auto_gaussian_summary(data, peak, cl)
-    result <- peak |>
-        dplyr::mutate(
-            diff_peak = abs(x_axis1 - x_axis2),
-            intensity_ratio = intensity1 / intensity2,
-            intensity_ratio = ifelse(intensity_ratio > 1, intensity_ratio, 1/intensity_ratio)
-        ) |>
-        left_join(fit, by = "id")
-    
-    result$id <- id
-    result$file <- file
-    return(result)
-}
+source("R_Code/functions.R")
 
 ### MODEL CREATION ###
 
@@ -204,10 +60,10 @@ filepath <- c(
     "data/training_data/bilayer/08142025_3.txt"
 )
 
-# PCA ON RAW SPECTRA
-
+nboot <- 1000
 num_cores <- detectCores(logical = FALSE) - 1
 cl <- makeCluster(num_cores, type = "PSOCK")
+viz_scale <- 1
 
 # cores || user || system || elapsed
 # 1 || 15 || 3 || 433
@@ -367,14 +223,51 @@ rr_pred <- predict(ridge_model, s = best_lambda, newx = large_scaled)
 rf_pred <- predict(forest_model, newdata = as.data.frame(large_scaled))
 vr_pred <- predict(svr_model, newdata = as.data.frame(large_scaled))
 pl_pred <- predict(plsr_model, newdata = as.data.frame(large_scaled_plsr), ncomp = 6)
+boot_predictions <- matrix(NA, nrow = nrow(large_scaled), ncol = nboot)
+
+set.seed(123)
+for (i in 1:nboot) {
+    back_features <- filter(scaled_features, Layer == "background")
+    mono_features <- filter(scaled_features, Layer == "monolayer")
+    bila_features <- filter(scaled_features, Layer == "bilayer")
+    
+    boot_index_back <- sample(seq_len(nrow(back_features)), replace = TRUE)
+    boot_index_mono <- sample(seq_len(nrow(mono_features)), replace = TRUE)
+    boot_index_bila <- sample(seq_len(nrow(bila_features)), replace = TRUE)
+    
+    boot_train_back <- back_features[boot_index_back, ]
+    boot_train_mono <- mono_features[boot_index_mono, ]
+    boot_train_bila <- bila_features[boot_index_bila, ]
+    boot_train <- rbind(boot_train_back, boot_train_mono, boot_train_bila)
+    
+    model <- plsr(
+        thickness ~ 
+            diff_peak + intensity_ratio + mu1 + mu2 + fwhm1 + fwhm2 + A1 + A2 + 
+            area1 + area2 + area_ratio + snr + rmse + diff_fit,
+        data = boot_train, validation = "none", scale = FALSE, ncomp = 3
+    )
+    
+    boot_predictions[, i] <- as.vector(
+        predict(model, newdata = as.data.frame(large_scaled_plsr), ncomp = 3)
+        )
+}
+
+mean_prediction <- rowMeans(boot_predictions)
+sd_prediction <- apply(boot_predictions, 1, sd)
+lower95 <- apply(boot_predictions, 1, quantile, probs = 0.025)
+upper95 <- apply(boot_predictions, 1, quantile, probs = 0.975)
 
 large_area_features$cluster_lda <- lda_pred$class
-large_area_features$thickness_lda <- map_vector[as.character(lda_pred$class)] * 5
-large_area_features$thickness_lm <- as.numeric(lm_pred * 5)
-large_area_features$thickness_rr <- as.numeric(as.vector(rr_pred) * 5)
-large_area_features$thickness_rf <- rf_pred * 5
-large_area_features$thickness_vr <- as.numeric(vr_pred) * 5
-large_area_features$thickness_pl <- as.numeric(pl_pred) * 5
+large_area_features$thickness_lda <- map_vector[as.character(lda_pred$class)] * viz_scale 
+large_area_features$thickness_lm <- as.numeric(lm_pred) * viz_scale
+large_area_features$thickness_rr <- as.numeric(as.vector(rr_pred)) * viz_scale
+large_area_features$thickness_rf <- rf_pred * viz_scale
+large_area_features$thickness_vr <- as.numeric(vr_pred) * viz_scale
+large_area_features$thickness_pl <- as.numeric(pl_pred) * viz_scale
+large_area_features$mean_thickness <- mean_prediction * viz_scale
+large_area_features$uncertainty <- sd_prediction * viz_scale
+large_area_features$lower95 <- lower95 * viz_scale
+large_area_features$upper95 <- upper95 * viz_scale
 large_area_features$x <- heatmap_df$x
 large_area_features$y <- heatmap_df$y
 large_area_features <- large_area_features |>
@@ -441,6 +334,21 @@ vr_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_vr)) +
     labs(fill = "Clustering") + 
     theme_bw()
 ggplotly(vr_p)
+
+pl_p <- ggplot(large_area_features, aes(x = x, y = y, fill = mean_thickness)) +
+    geom_tile() +
+    coord_equal() +
+    scale_y_reverse() +
+    scale_fill_gradientn(
+        colors = c("purple", "blue", "orange", "red"),
+        limits = c(-0.05, 10), 
+        oob = squish, 
+        breaks = c(-0.05, 0, 2.5, 5, 10),
+        labels = c("≤ 0", "0", "0.5", "1", "2")
+    ) +
+    labs(fill = "Clustering") + 
+    theme_bw()
+ggplotly(pl_p)
 
 p <- ggplot(a, aes(x = x, y = y, fill = goofy_mean)) +
     geom_tile() +
