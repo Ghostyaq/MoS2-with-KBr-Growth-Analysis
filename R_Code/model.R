@@ -11,6 +11,7 @@ library(randomForest)
 library(e1071)
 library(pls)
 library(scales)
+library(nnet)
 
 source("R_Code/functions.R")
 
@@ -63,7 +64,7 @@ filepath <- c(
 nboot <- 1000
 num_cores <- detectCores(logical = FALSE) - 1
 cl <- makeCluster(num_cores, type = "PSOCK")
-viz_scale <- 1
+viz_scale <- 10
 
 # cores || user || system || elapsed
 # 1 || 15 || 3 || 433
@@ -107,23 +108,23 @@ scaled_features$thickness <- feature_table$thickness
 
 ### LINEAR DISCRIMINATORY ANALYSIS ###
 lda_model_benchmark <- lda(
-    thickness ~ (diff_peak + A1 + A2 + area_ratio + fwhm1 + fwhm2 + diff_fit),
+    thickness ~ x_axis1 + mu1 + fwhm2 + area_ratio + rmse,
     data = scaled_features, CV = TRUE
 )
 
 table(Actual = feature_table$thickness, Predicted = lda_model_benchmark$class)
 lda_model <- lda(
-    Layer ~ (diff_peak + A1 + A2 + area_ratio + fwhm1 + fwhm2 + diff_fit),
+    Layer ~ x_axis1 + mu1 + fwhm2 + area_ratio + rmse,
     data = scaled_features
 )
 
 ### LINEAR REGRESSION ###
 linear_model <- lm(
-    thickness ~ (diff_peak + A1 + A2 + area_ratio + fwhm1 + fwhm2 + diff_fit),
+    thickness ~ x_axis2 + intensity_ratio + fwhm1 + area1 + rmse,
     data = scaled_features)
 
 ### RIDGE REGRESSION ###
-X <- as.matrix(scaled_features[1:7])
+X <- as.matrix(scaled_features[c(2, 4, 7, 11, 15)])
 y <- scaled_features$thickness
 ridge_cv_model <- cv.glmnet(X, y, alpha = 0)
 best_lambda <- ridge_cv_model$lambda.min
@@ -134,22 +135,19 @@ coef(ridge_model)
 
 ### RANDOM FOREST REGRESSION ###
 forest_model <- randomForest(
-    thickness ~ (diff_peak + A1 + A2 + area_ratio + fwhm1 + fwhm2 + diff_fit),
+    thickness ~ (x_axis1 + mu1 + fwhm2 + area_ratio + r_squared),
     data = scaled_features, ntree = 500, mtry = 2, importance = TRUE
 )
 
-
 ### SUPPORT VECTOR REGRESSION ###
 svr_model <- svm(
-    thickness ~ (diff_peak + A1 + A2 + area_ratio + fwhm1 + fwhm2 + diff_fit),
+    thickness ~ x_axis1 + x_axis2 + intensity_ratio + area1 + rmse + r_squared,
     data = scaled_features, type = "eps-regression", kernel = "radial"
 )
 
 ### PARTIAL LINEAR REGRESSION ###
 plsr_model <- plsr(
-    thickness ~ 
-        diff_peak + intensity_ratio + mu1 + mu2 + fwhm1 + fwhm2 + A1 + A2 + 
-        area1 + area2 + area_ratio + snr + rmse + diff_fit,
+    thickness ~ x_axis2 + intensity_ratio + fwhm1 + area1 + rmse,
     data = scaled_features,
     validation = "LOO",
     scale = FALSE
@@ -157,7 +155,15 @@ plsr_model <- plsr(
 validationplot(plsr_model, val.type = "RMSEP")
 
 ######### # NEURAL?! ########## 
-
+nn_model <- nnet(
+    thickness ~ (x_axis1 + intensity_ratio + mu1 + fwhm2 + area_ratio + r_squared),
+    data = scaled_features, 
+    size = 3,      # hidden neurons
+    linout = TRUE, # regression instead of classification
+    decay = 0.01,  # weight decay to reduce overfitting
+    maxit = 1000,
+    trace = TRUE
+)
 
 ### LARGE AREA SCAN PROCESSING ###
 
@@ -202,7 +208,7 @@ heatmap_df <- peak_summary |>
 ### LDA MODEL APPLICATION ###
 large_area_features <- heatmap_df |>
     dplyr::select(
-       x_axis1, x_axis2, diff_peak, intensity_ratio, 
+        x_axis1, x_axis2, diff_peak, intensity_ratio, 
         mu1, mu2, fwhm1, fwhm2, A1, A2, area1, area2, area_ratio, snr, rmse,
         r_squared, diff_fit
     )
@@ -210,20 +216,25 @@ large_scaled <- scale(
     large_area_features,
     center = center,
     scale = scale
-)[, c(3, 7:10, 13, 17)]
-large_scaled_plsr <- scale(
-    large_area_features,
-    center = center,
-    scale = scale
 )
+# x_axis1, x_axis2, diff_peak, intensity_ratio, mu1, mu2, fwhm1, fwhm2, A1, A2,
+# area1, area2, area_ratio, snr, rmse, r_squared, diff_fit
+#LDA    : x_axis1 + mu1 + fwhm2 + area_ratio + rmse
+#LINEAR : x_axis2 + intensity_ratio + fwhm1 + area1 + rmse
+#RIDGE  : c(2, 4, 7, 11, 15)
+#FOREST : x_axis1 + mu1 + fwhm2 + area_ratio + r_squared
+#SVR    : x_axis1 + x_axis2 + intensity_ratio + area1 + rmse + r_squared
+#PLSR   : x_axis2 + intensity_ratio + fwhm1 + area1 + rmse
+#NN     : x_axis1 + intensity_ratio + mu1 + fwhm2 + area_ratio + r_squared
 
-lda_pred <- predict(lda_model, newdata = as.data.frame(large_scaled))
-lm_pred <- predict(linear_model, newdata = as.data.frame(large_scaled))
-rr_pred <- predict(ridge_model, s = best_lambda, newx = large_scaled)
-rf_pred <- predict(forest_model, newdata = as.data.frame(large_scaled))
-vr_pred <- predict(svr_model, newdata = as.data.frame(large_scaled))
-pl_pred <- predict(plsr_model, newdata = as.data.frame(large_scaled_plsr), ncomp = 6)
-boot_predictions <- matrix(NA, nrow = nrow(large_scaled), ncol = nboot)
+lda_pred <- predict(lda_model, newdata = as.data.frame(large_scaled[, c(1, 5, 8, 13, 15)]))
+lm_pred <- predict(linear_model, newdata = as.data.frame(large_scaled[, c(2, 4, 7, 11, 15)]))
+rr_pred <- predict(ridge_model, s = best_lambda, newx = large_scaled[, c(2, 4, 7, 11, 15)])
+rf_pred <- predict(forest_model, newdata = as.data.frame(large_scaled[, c(1, 5, 8, 13, 16)]))
+vr_pred <- predict(svr_model, newdata = as.data.frame(large_scaled[, c(1, 2, 4, 11, 15, 16)]))
+pl_pred <- predict(plsr_model, newdata = as.data.frame(large_scaled[, c(2, 4, 7, 11, 15)]), ncomp = 5)
+nn_pred <- predict(nn_model, newdata = as.data.frame(large_scaled[, c(1, 4, 5, 7, 8, 13, 16)]))
+boot_predictions <- matrix(NA, nrow = nrow(large_scaled[, c(2, 4, 7, 11, 15)]), ncol = nboot)
 
 set.seed(123)
 for (i in 1:nboot) {
@@ -241,14 +252,12 @@ for (i in 1:nboot) {
     boot_train <- rbind(boot_train_back, boot_train_mono, boot_train_bila)
     
     model <- plsr(
-        thickness ~ 
-            diff_peak + intensity_ratio + mu1 + mu2 + fwhm1 + fwhm2 + A1 + A2 + 
-            area1 + area2 + area_ratio + snr + rmse + diff_fit,
+        thickness ~ x_axis2 + intensity_ratio + fwhm1 + area1 + rmse,
         data = boot_train, validation = "none", scale = FALSE, ncomp = 3
     )
     
     boot_predictions[, i] <- as.vector(
-        predict(model, newdata = as.data.frame(large_scaled_plsr), ncomp = 3)
+        predict(model, newdata = as.data.frame(large_scaled[, c(2, 4, 7, 11, 15)]), ncomp = 3)
         )
 }
 
@@ -264,6 +273,7 @@ large_area_features$thickness_rr <- as.numeric(as.vector(rr_pred)) * viz_scale
 large_area_features$thickness_rf <- rf_pred * viz_scale
 large_area_features$thickness_vr <- as.numeric(vr_pred) * viz_scale
 large_area_features$thickness_pl <- as.numeric(pl_pred) * viz_scale
+large_area_features$thickness_nn <- as.numeric(nn_pred) * viz_scale
 large_area_features$mean_thickness <- mean_prediction * viz_scale
 large_area_features$uncertainty <- sd_prediction * viz_scale
 large_area_features$lower95 <- lower95 * viz_scale
@@ -335,7 +345,7 @@ vr_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_vr)) +
     theme_bw()
 ggplotly(vr_p)
 
-pl_p <- ggplot(large_area_features, aes(x = x, y = y, fill = mean_thickness)) +
+pl_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_pl)) +
     geom_tile() +
     coord_equal() +
     scale_y_reverse() +
@@ -350,16 +360,31 @@ pl_p <- ggplot(large_area_features, aes(x = x, y = y, fill = mean_thickness)) +
     theme_bw()
 ggplotly(pl_p)
 
-p <- ggplot(a, aes(x = x, y = y, fill = goofy_mean)) +
+nn_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_nn)) +
     geom_tile() +
     coord_equal() +
     scale_y_reverse() +
     scale_fill_gradientn(
         colors = c("purple", "blue", "orange", "red"),
-        limits = c(-25, 25), 
+        #limits = c(-0.05, 10), 
+        #oob = squish, 
+        #breaks = c(-0.05, 0, 2.5, 5, 10),
+        #labels = c("≤ 0", "0", "0.5", "1", "2")
+    ) +
+    labs(fill = "Clustering") + 
+    theme_bw()
+ggplotly(nn_p)
+
+p <- ggplot(large_area_features, aes(x = x, y = y, fill = mean_thickness)) +
+    geom_tile() +
+    coord_equal() +
+    scale_y_reverse() +
+    scale_fill_gradientn(
+        colors = c("purple", "blue", "orange", "red"),
+        limits = c(-0.05, 10), 
         oob = squish, 
-        breaks = c(-25, 0, 2.5, 5, 25),
-        labels = c("≤ -5", "0", "0.5", "1", "5")
+        breaks = c(-0.05, 0, 2.5, 5, 10),
+        labels = c("≤ 0", "0", "0.5", "1", "2")
     ) +
     labs(fill = "Clustering") + 
     theme_bw()
