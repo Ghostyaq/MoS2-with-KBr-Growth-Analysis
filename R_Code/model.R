@@ -64,7 +64,7 @@ filepath <- c(
 nboot <- 1000
 num_cores <- detectCores(logical = FALSE) - 1
 cl <- makeCluster(num_cores, type = "PSOCK")
-viz_scale <- 10
+viz_scale <- 1
 
 # cores || user || system || elapsed
 # 1 || 15 || 3 || 433
@@ -288,106 +288,14 @@ large_area_features <- large_area_features |>
             ) / 6
     )
 
-lm_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_lm)) +
-    geom_tile() +
-    coord_equal() +
-    scale_y_reverse() +
-    scale_fill_gradientn(
-        colors = c("purple", "blue", "orange", "red"),
-        limits = c(-25, 25), 
-        oob = squish, 
-        breaks = c(-25, 0, 2.5, 5, 25),
-        labels = c("≤ -5", "0", "0.5", "1", "5")
-    ) +
-    labs(fill = "Clustering") + 
-    theme_bw()
+source("R_Code/graphs.R")
 ggplotly(lm_p)
-
-lda_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_lda)) +
-    geom_tile() +
-    coord_equal() +
-    scale_y_reverse() +
-    scale_fill_gradientn(colors = c("lightblue", "yellow", "red")) + 
-    labs(fill = "Clustering") + 
-    theme_bw()
 ggplotly(lda_p)
-
-rr_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_rr)) +
-    geom_tile() +
-    coord_equal() +
-    scale_y_reverse() +
-    scale_fill_gradientn(
-        colors = c("purple", "blue", "orange", "red"),
-        limits = c(-0.05, 10), 
-        oob = squish, 
-        breaks = c(-0.05, 0, 2.5, 5, 10),
-        labels = c("≤ 0", "0", "0.5", "1", "2")
-    ) +
-    labs(fill = "Clustering") + 
-    theme_bw()
 ggplotly(rr_p)
-
-rf_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_rf)) +
-    geom_tile() +
-    coord_equal() +
-    scale_y_reverse() +
-    scale_fill_gradientn(colors = c("lightblue", "yellow", "red")) + 
-    labs(fill = "Clustering") + 
-    theme_bw()
 ggplotly(rf_p)
-
-vr_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_vr)) +
-    geom_tile() +
-    coord_equal() +
-    scale_y_reverse() +
-    scale_fill_gradientn(colors = c("lightblue", "yellow", "red")) + 
-    labs(fill = "Clustering") + 
-    theme_bw()
 ggplotly(vr_p)
-
-pl_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_pl)) +
-    geom_tile() +
-    coord_equal() +
-    scale_y_reverse() +
-    scale_fill_gradientn(
-        colors = c("purple", "blue", "orange", "red"),
-        limits = c(-0.05, 10), 
-        oob = squish, 
-        breaks = c(-0.05, 0, 2.5, 5, 10),
-        labels = c("≤ 0", "0", "0.5", "1", "2")
-    ) +
-    labs(fill = "Clustering") + 
-    theme_bw()
 ggplotly(pl_p)
-
-nn_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_nn)) +
-    geom_tile() +
-    coord_equal() +
-    scale_y_reverse() +
-    scale_fill_gradientn(
-        colors = c("purple", "blue", "orange", "red"),
-        #limits = c(-0.05, 10), 
-        #oob = squish, 
-        #breaks = c(-0.05, 0, 2.5, 5, 10),
-        #labels = c("≤ 0", "0", "0.5", "1", "2")
-    ) +
-    labs(fill = "Clustering") + 
-    theme_bw()
 ggplotly(nn_p)
-
-p <- ggplot(large_area_features, aes(x = x, y = y, fill = mean_thickness)) +
-    geom_tile() +
-    coord_equal() +
-    scale_y_reverse() +
-    scale_fill_gradientn(
-        colors = c("purple", "blue", "orange", "red"),
-        limits = c(-0.05, 10), 
-        oob = squish, 
-        breaks = c(-0.05, 0, 2.5, 5, 10),
-        labels = c("≤ 0", "0", "0.5", "1", "2")
-    ) +
-    labs(fill = "Clustering") + 
-    theme_bw()
 ggplotly(p)
 
 write.csv(large_area_features, file = "../paraview_data/analysis_results.csv", row.names = FALSE)
