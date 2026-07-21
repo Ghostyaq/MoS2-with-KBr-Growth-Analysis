@@ -9,6 +9,7 @@ library(parallel)
 library(randomForest)
 library(nnet)
 library(glmnet)
+library(tidyverse)
 
 model_metrics <- function(actual, predicted) {
     rmse <- sqrt(mean((actual - predicted) ^ 2))
@@ -18,7 +19,7 @@ model_metrics <- function(actual, predicted) {
 }
 
 real_measurements <- scaled_features$thickness
-temp <- scaled_features |> select(!c(Layer, thickness))
+temp <- scaled_features |> dplyr::select(!c(Layer, thickness))
 
 numbers <- 1:17
 all_combos <- lapply(2:length(numbers), function(x) {
@@ -46,11 +47,10 @@ calculate_metrics <- function(selection, data, thickness, Layer) {
     selected_vars <- names(data)[selection]
     vars_used_string <- paste(selected_vars, collapse = ", ")
     subset_data <- data[, selection, drop = FALSE]
-    subset_data$thickness <- thickness
-    
+
     # -------- LDA --------
     lda_metrics <- tryCatch ({
-        lda_model <- lda(Layer ~ ., data = cbind(Layer, subset_data))
+        lda_model <- lda(Layer ~ ., data = cbind(Layer, subset_data), prior = c(1/3, 1/3, 1/3))
         lda_prediction_class <- predict(lda_model, newdata = subset_data)$class
         lda_prediction <- (c(
             background = 0,
@@ -60,15 +60,16 @@ calculate_metrics <- function(selection, data, thickness, Layer) {
         model_metrics(thickness, lda_prediction)
     }, error = function(e) {
         print(e$message)
-        data.frame(RMSE = NA, MAE = NA, R2 = NA)
+        data.frame(RMSE = e$message, MAE = NA, R2 = NA)
         })
     
+    subset_data$thickness <- thickness
     # -------- PLSR (dynamic ncomp optimization) --------
     plsr_model <- plsr(thickness ~ ., data = subset_data, scale = FALSE)
     max_comp <- plsr_model$ncomp
     rmse <- sapply(1:max_comp, function(i){
             pred <- as.vector(predict(plsr_model, ncomp = i))
-            sqrt(mean((subset_data$thickness-pred)^2))
+            sqrt(mean((subset_data$thickness - pred) ^ 2))
         }
     )
     best_ncomp <- which.min(rmse)
@@ -147,10 +148,10 @@ rownames(final_results_df) <- NULL
 
 # --------------------------- #
 
-load("data/Rdata/benchmark_non_cv.RData")
+#load("data/Rdata/benchmark_non_cv.RData")
 
 #LDA
-lda_best <- filter(final_results_df, Model == "LDA") |> arrange((R2)) |> head(20)
+lda_best <- filter(final_results_df, Model == "LDA") |> arrange(desc(R2)) |> head(20)
 lin_reg_best <- filter(final_results_df, Model == "Lin Reg") |> arrange(desc(R2)) |> head(20)
 plsr_best <- filter(final_results_df, Model == "PLSR") |> arrange(desc(R2)) |> head(20)
 svr_best <- filter(final_results_df, Model == "SVR") |> arrange(desc(R2)) |> head(20)
