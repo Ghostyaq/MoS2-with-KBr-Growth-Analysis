@@ -1,5 +1,6 @@
 rm(list = ls())
 load("data/RData/base_analysis.RData")
+load("data/RData/benchmarking_non_cv.RData")
 
 library(MASS)
 library(pls)
@@ -33,11 +34,12 @@ loocv <- function(train_fun, predict_fun, data){
 real_measurements <- scaled_features$thickness
 temp <- scaled_features |> select(!c(Layer, thickness))
 
-#numbers <- 2:17
-#all_combos <- lapply(1:length(numbers), function(x) {
-#    combn(numbers, x, simplify = FALSE)
-#})
-#all_combos <- unlist(all_combos, recursive = FALSE)
+numbers <- 1:17
+all_combos <- lapply(2:7, function(x) {
+    combn(numbers, x, simplify = FALSE)
+})
+all_combos <- unlist(all_combos, recursive = FALSE)
+#all_combos <- best$Indices_Used
 
 # 1. Setup the Parallel Cluster
 num_cores <- max(1, detectCores() - 1)
@@ -66,7 +68,7 @@ calculate_metrics <- function(selection, data, thickness, real_measurements) {
     lda_prediction <- c(
         "background" = 0, 
         "monolayer" = 0.7, 
-        "bilayer" = 1.4
+        "bilayer" = 2.02
     )[lda_model_benchmark$class]
     
     # -------- PLSR (dynamic ncomp optimization) --------
@@ -80,11 +82,11 @@ calculate_metrics <- function(selection, data, thickness, real_measurements) {
     plsr_prediction <- as.vector(plsr_model$validation$pred[, , best_ncomp])
     
     # -------- LINEAR --------
-    linear_prediction <- loocv(
-        train_fun = function(train) {lm(thickness ~ ., data = train)},
-        predict_fun = function(model, test) {predict(model, test)},
-        data = subset_data
-    )
+    linear_model <- lm(thickness ~ ., data = subset_data)
+    fitted <- fitted(linear_model)
+    residuals <- resid(linear_model)
+    leverages <- hatvalues(linear_model)
+    linear_prediction <- subset_data$thickness - residuals / (1 - leverages)
     
     # -------- SVR --------
     svr_prediction <- loocv(
@@ -96,16 +98,21 @@ calculate_metrics <- function(selection, data, thickness, real_measurements) {
     )
     
     # -------- RR --------
+    X <- as.matrix(dplyr::select(subset_data, -thickness))
+    y <- subset_data$thickness
+    
+    ridge_cv <- cv.glmnet(X, y, alpha = 0, nfolds = nrow(subset_data))
+    best_lambda <- ridge_cv$lambda.min
     ridge_prediction <- loocv(
         train_fun = function(train){
             X_train <- as.matrix(dplyr::select(train, -thickness))
             y_train <- train$thickness
-            model <- cv.glmnet(X_train, y_train, alpha = 0, nfolds = nrow(train))
+            glmnet(X_train, y_train, alpha = 0, lambda = best_lambda)
         },
         predict_fun = function(model, test){
             X_test <- as.matrix(dplyr::select(test, -thickness))
-            predict(model, newx = X_test, s = "lambda.min")
-            },
+            predict(model, newx = X_test, s = best_lambda)
+        },
         data = subset_data
     )
     
@@ -113,7 +120,7 @@ calculate_metrics <- function(selection, data, thickness, real_measurements) {
     forest_prediction <- loocv(
         train_fun = function(train){
             forest_model <- randomForest(
-                thickness ~ ., data = train,  ntree = 500, mtry = 2
+                thickness ~ ., data = train,  ntree = 100, mtry = 2
             )
         },
         predict_fun = function(model, test){predict(model, newdata = test)},
@@ -159,6 +166,7 @@ calculate_metrics <- function(selection, data, thickness, real_measurements) {
 }
 
 # 3. Run in Parallel with a Progress Bar
+pboptions(type = "txt")
 results_list <- pblapply(
     X = all_combos, 
     FUN = calculate_metrics, 
