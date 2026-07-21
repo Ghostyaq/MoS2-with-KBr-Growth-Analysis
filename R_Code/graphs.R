@@ -1,7 +1,6 @@
 lm_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_lm)) +
     geom_tile() +
     coord_equal() +
-    scale_y_reverse() +
     scale_fill_gradientn(
         colors = c("purple", "blue", "orange", "red"),
         limits = c(-2, 3), 
@@ -15,7 +14,6 @@ lm_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_lm)) +
 lda_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_lda)) +
     geom_tile() +
     coord_equal() +
-    scale_y_reverse() +
     scale_fill_gradientn(colors = c("lightblue", "yellow", "red")) + 
     labs(fill = "Clustering", title = "Linear Discriminant Analysis Predictions") + 
     theme_bw()
@@ -23,7 +21,6 @@ lda_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_lda)) +
 rr_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_rr)) +
     geom_tile() +
     coord_equal() +
-    scale_y_reverse() +
     scale_fill_gradientn(
         colors = c("purple", "blue", "orange", "red"),
         limits = c(-0.05, 2), 
@@ -37,7 +34,6 @@ rr_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_rr)) +
 rf_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_rf)) +
     geom_tile() +
     coord_equal() +
-    scale_y_reverse() +
     scale_fill_gradientn(colors = c("lightblue", "yellow", "red")) + 
     labs(fill = "Clustering", title = "Random Forest Predictions") + 
     theme_bw()
@@ -45,7 +41,6 @@ rf_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_rf)) +
 vr_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_vr)) +
     geom_tile() +
     coord_equal() +
-    scale_y_reverse() +
     scale_fill_gradientn(colors = c("lightblue", "yellow", "red")) + 
     labs(fill = "Clustering", title = "Support Vector Predictions") + 
     theme_bw()
@@ -53,7 +48,6 @@ vr_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_vr)) +
 pl_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_pl)) +
     geom_tile() +
     coord_equal() +
-    scale_y_reverse() +
     scale_fill_gradientn(
         colors = c("purple", "blue", "orange", "red"),
         limits = c(-0.05, 2), 
@@ -67,7 +61,6 @@ pl_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_pl)) +
 nn_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_nn)) +
     geom_tile() +
     coord_equal() +
-    scale_y_reverse() +
     scale_fill_gradientn(
         colors = c("purple", "blue", "orange", "red"),
         #limits = c(-0.05, 10), 
@@ -81,7 +74,6 @@ nn_p <- ggplot(large_area_features, aes(x = x, y = y, fill = thickness_nn)) +
 p <- ggplot(large_area_features, aes(x = x, y = y, fill = mean_thickness)) +
     geom_tile() +
     coord_equal() +
-    scale_y_reverse() +
     scale_fill_gradientn(
         colors = c("purple", "blue", "orange", "red"),
         limits = c(-0.05, 2), 
