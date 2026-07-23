@@ -157,7 +157,7 @@ validationplot(plsr_model, val.type = "RMSEP")
 
 ############ # NEURAL?! #############
 nn_model <- nnet(
-    thickness ~ (mu1 + fwhm1 + A1 + area_ratio + rmse + diff_fit),
+    thickness ~ (mu1 + fwhm1 + A1 + area_ratio + rmse),
     data = scaled_features, 
     size = 3,      # hidden neurons
     linout = TRUE, # regression instead of classification
