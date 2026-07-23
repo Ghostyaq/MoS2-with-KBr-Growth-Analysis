@@ -8,7 +8,7 @@ library(minpack.lm)
 # 6, 24, 8
 
 find_peak_locations <- function(raw) {
-    data <- raw[raw$V1 > 375 & raw$V1 < 420, ]
+    data <- raw[raw$V1 > 365 & raw$V1 < 430, ]
     x_axis <- data$V1
     
     e2g_idx <- which(x_axis > 375 & x_axis < 395)
@@ -104,9 +104,9 @@ auto_gaussian_summary <- function(raw, peak_locations) {
         ss_tot <- sum((y - mean(y))^2)
         r_squared <- 1 - ss_res / ss_tot
         
-        if (r_squared < 0.90) {
+        if (r_squared < 0.85) {
             results[[i]] <- error_return
-            print("r_squared below 90%")
+            print("r_squared below 85%")
             next
         }
         

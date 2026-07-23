@@ -118,7 +118,7 @@ def fit_single_spectrum(x, y, peak_row):
             double_gaussian, x, y, p0=initial,
             bounds=(
                 [0, 370, 0.5, 0, 390, 0.5, 0],
-                [1100, 400, 20, 1100, 430, 20, 1100]
+                [1500, 400, 20, 1500, 430, 20, 1500]
             ),
             maxfev=10000
         )

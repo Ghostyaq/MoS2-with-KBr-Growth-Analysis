@@ -162,7 +162,7 @@ def predict_models(models, features, status_callback, status):
     status("Ended probability prediction", status_callback)
 
     predictions = pd.DataFrame()
-    
+    print(features)
     status("Start linear prediction", status_callback)
     predictions["linear_thickness"] = (models["linear"].predict(features))
     status("Start ridge prediction", status_callback)

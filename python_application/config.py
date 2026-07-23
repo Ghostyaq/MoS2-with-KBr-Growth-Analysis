@@ -107,7 +107,7 @@ LAYER_NAMES = [
 THICKNESS_MAP = {
     "background": 0,
     "monolayer": 0.7,
-    "bilayer": 1.5
+    "bilayer": 2.02
 }
 
 # ============================================================
