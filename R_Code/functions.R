@@ -11,6 +11,7 @@ library(randomForest)
 library(e1071)
 library(pls)
 library(scales)
+library(nnet)
 
 normalize_data <- function(raw) {
     cols <- 2:ncol(raw)
@@ -91,7 +92,7 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
             )
         },
         error = function(e) {
-            message("Spectrum ", spectrum_id, ": ", e$message)
+            cat(paste0("Spectrum ", spectrum_id, ": ", e$message))
             NULL
         })
         
@@ -157,4 +158,12 @@ process_spectrum <- function(file, id, cl){
     result$id <- id
     result$file <- file
     return(result)
+}
+
+model_metrics <- function(actual, predicted) {
+    residual <- actual - predicted
+    rmse <- sqrt(mean((residual) ^ 2))
+    mae <- mean(abs(residual))
+    r2 <- 1 - sum((residual) ^ 2) / sum((actual - mean(actual)) ^ 2)
+    data.frame(RMSE = rmse, MAE = mae, R2 = r2)
 }

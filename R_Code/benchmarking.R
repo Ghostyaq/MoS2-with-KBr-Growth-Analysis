@@ -1,5 +1,6 @@
 rm(list = ls())
-load("data/RData/base_analysis.RData")
+#load("data/RData/scaled_features.RData")
+load("data/RData/new_data.RData")
 
 library(MASS)
 library(pls)
@@ -55,7 +56,8 @@ calculate_metrics <- function(selection, data, thickness, Layer) {
         lda_prediction <- (c(
             background = 0,
             monolayer = 0.7,
-            bilayer = 2.02
+            bilayer = 2.02,
+            bulk = 4
         )[lda_prediction_class])
         model_metrics(thickness, lda_prediction)
     }, error = function(e) {

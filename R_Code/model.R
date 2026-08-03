@@ -1,19 +1,4 @@
 rm(list = ls())
-library(MASS)
-library(mclust)
-library(plotly)
-library(tidyverse)
-library(pracma)
-library(data.table)
-library(minpack.lm)
-library(parallel)
-library(glmnet)
-library(randomForest)
-library(e1071)
-library(pls)
-library(scales)
-library(nnet)
-
 source("R_Code/functions.R")
 
 ### MODEL CREATION ###
@@ -62,6 +47,11 @@ filepath <- c(
     "data/training_data/bilayer/08142025_3.txt"
 )
 
+filepath <- list.files(
+    path = "data/training_data", pattern = "\\.txt$", 
+    recursive = TRUE, full.names = TRUE
+    )
+
 nboot <- 1000
 num_cores <- detectCores(logical = FALSE) - 1
 cl <- makeCluster(num_cores, type = "PSOCK")
@@ -87,7 +77,7 @@ results <- bind_rows(lapply(seq_along(filepath), function(i) {
 
 labels <- as.factor(basename(dirname(filepath)))
 results$Layer <- labels
-map_vector <- c("background" = 0, "monolayer" = 0.7, "bilayer" = 2.02)
+map_vector <- c("background" = 0, "monolayer" = 0.7, "bilayer" = 2.02, "bulk" = 4.00)
 results$thickness <- map_vector[as.character(results$Layer)]
 
 feature_table <- results |>
@@ -109,23 +99,23 @@ scaled_features$thickness <- feature_table$thickness
 
 ### LINEAR DISCRIMINATORY ANALYSIS ###
 lda_model_benchmark <- lda(
-    thickness ~ intensity_ratio + mu2 + area1,
+    thickness ~ x_axis1 + intensity_ratio + fwhm2 + area1,
     data = scaled_features, CV = TRUE
 )
 
 table(Actual = feature_table$thickness, Predicted = lda_model_benchmark$class)
 lda_model <- lda(
-    Layer ~ intensity_ratio + mu2 + area1,
+    Layer ~ x_axis1 + intensity_ratio + fwhm2 + area1,
     data = scaled_features
 )
 
 ### LINEAR REGRESSION ###
 linear_model <- lm(
-    thickness ~ x_axis1 + A2 + area1 + rmse,
+    thickness ~ intensity_ratio + mu1 + fwhm2 + A1 + A2 + area1 + area2,
     data = scaled_features)
 
 ### RIDGE REGRESSION ###
-X <- as.matrix(scaled_features[c(11, 13, 15)])
+X <- as.matrix(scaled_features[c(4, 5, 7, 8, 11, 13)])
 y <- scaled_features$thickness
 ridge_cv_model <- cv.glmnet(X, y, alpha = 0)
 best_lambda <- ridge_cv_model$lambda.min
@@ -136,19 +126,19 @@ coef(ridge_model)
 
 ### RANDOM FOREST REGRESSION ###
 forest_model <- randomForest(
-    thickness ~ (x_axis1 + mu1 + fwhm2 + area_ratio + r_squared),
+    thickness ~ (intensity_ratio + fwhm2 + r_squared),
     data = scaled_features, ntree = 500, mtry = 2, importance = TRUE
 )
 
 ### SUPPORT VECTOR REGRESSION ###
 svr_model <- svm(
-    thickness ~ x_axis1 + intensity_ratio + fwhm1 + fwhm2 + area_ratio + snr,
+    thickness ~ intensity_ratio + fwhm2 + snr,
     data = scaled_features, type = "eps-regression", kernel = "radial"
 )
 
 ###### PARTIAL LINEAR REGRESSION ######
 plsr_model <- plsr(
-    thickness ~ intensity_ratio + mu1 + fwhm1 + A1 + A2 + area_ratio + rmse,
+    thickness ~ intensity_ratio + mu1 + fwhm2 + A1 + A2 + area1 + area2,
     data = scaled_features,
     validation = "LOO",
     scale = FALSE
@@ -157,13 +147,9 @@ validationplot(plsr_model, val.type = "RMSEP")
 
 ############ # NEURAL?! #############
 nn_model <- nnet(
-    thickness ~ (mu1 + fwhm1 + A1 + area_ratio + rmse),
-    data = scaled_features, 
-    size = 3,      # hidden neurons
-    linout = TRUE, # regression instead of classification
-    decay = 0.01,  # weight decay to reduce overfitting
-    maxit = 1000,
-    trace = TRUE
+    thickness ~ (intensity_ratio + fwhm1 + fwhm2 + area2 + r_squared),
+    data = scaled_features, size = 3,  linout = TRUE, decay = 0.01, 
+    maxit = 1000, trace = TRUE
 )
 
 ### LARGE AREA SCAN PROCESSING ###
@@ -173,10 +159,11 @@ file_path <- paste0(
     size, "x", size, 
     "/Large Area Scan.csv"
 )
+#file_path <- "../data/July 2026/large_area_scan/Ending 07312026 map.txt"
 
 compute_time <- round(0.00588271 * size ^ 2 + 2.21832, 2)
-paste0("Time to Compute: ", compute_time %/% 60, ":", (compute_time %% 60))
-raw <- fread(file_path, header = FALSE)
+paste0("Time to Compute: ", round(compute_time %/% 60, 0), ":", (compute_time %% 60))
+raw <- fread(file_path, header = FALSE)#[-c(1, 2), ]
 data <- normalize_data(raw)
 
 peak_summary <- find_peak_locations(data, cl)
@@ -198,7 +185,7 @@ peak_summary <- peak_summary |>
 heatmap_df <- peak_summary |>
     dplyr::mutate(
         x = ((id - 1) %% size) + 1,
-        y = 300 - (((id - 1) %/% size) + 1) + 1
+        y = size - (((id - 1) %/% size) + 1) + 1
         ) |>
     dplyr::select(
         id, x, y, x_axis1, x_axis2, diff_peak, mu1, mu2, diff_fit, 
@@ -217,48 +204,61 @@ large_scaled <- scale(
     center = center,
     scale = scale
 )
+
 # x_axis1, x_axis2, diff_peak, intensity_ratio, mu1, mu2, fwhm1, fwhm2, A1, A2,
 # area1, area2, area_ratio, snr, rmse, r_squared, diff_fit
-#LDA    : x_axis1 + mu1 + fwhm2 + area_ratio + rmse
-#LINEAR : x_axis2 + intensity_ratio + fwhm1 + area1 + rmse
-#RIDGE  : c(2, 4, 7, 11, 15)
-#FOREST : x_axis1 + mu1 + fwhm2 + area_ratio + r_squared
-#SVR    : x_axis1 + x_axis2 + intensity_ratio + area1 + rmse + r_squared
-#PLSR   : x_axis2 + intensity_ratio + fwhm1 + area1 + rmse
-#NN     : x_axis1 + intensity_ratio + mu1 + fwhm2 + area_ratio + r_squared
+#LDA    : x_axis1, intensity_ratio, fwhm2, area1
+#LINEAR : intensity_ratio, mu1, fwhm2, A1, A2, area1, area2
+#RIDGE  : intensity_ratio, mu1, fwhm1, fwhm2, area1, area_ratio
+#FOREST : intensity_ratio, fwhm2, r_squared
+#SVR    : intensity_ratio, fwhm2, snr
+#PLSR   : intensity_ratio, mu1, fwhm2, A1, A2, area1, area2
+#NN     : intensity_ratio, fwhm1, fwhm2, area2, r_squared
 
-lda_pred <- predict(lda_model, newdata = as.data.frame(large_scaled[, c(4, 6, 11)]))
-lm_pred <- predict(linear_model, newdata = as.data.frame(large_scaled[, c(1, 10, 11, 15)]))
-rr_pred <- predict(ridge_model, s = best_lambda, newx = large_scaled[, c(11, 13, 15)])
-rf_pred <- predict(forest_model, newdata = as.data.frame(large_scaled[, c(1, 5, 8, 13, 16)]))
-vr_pred <- predict(svr_model, newdata = as.data.frame(large_scaled[, c(1, 4, 7, 8, 13, 14)]))
-pl_pred <- predict(plsr_model, newdata = as.data.frame(large_scaled[, c(4, 5, 7, 9, 10, 13, 15)]), ncomp = 4)
-nn_pred <- predict(nn_model, newdata = as.data.frame(large_scaled[, c(5, 7, 9, 13, 15)]))
-boot_predictions <- matrix(NA, nrow = nrow(large_scaled[, c(2, 4, 7, 11, 15)]), ncol = nboot)
+lda_pred <- predict(lda_model, newdata = as.data.frame(large_scaled[, c(1, 4, 8, 11)]))
+lm_pred <- predict(linear_model, newdata = as.data.frame(large_scaled[, c(4, 5, 8, 9, 10, 11, 12)]))
+rr_pred <- predict(ridge_model, s = best_lambda, newx = large_scaled[, c(4, 5, 7, 8, 11, 13)])
+rf_pred <- predict(forest_model, newdata = as.data.frame(large_scaled[, c(4, 8, 16)]))
+vr_pred <- predict(svr_model, newdata = as.data.frame(large_scaled[, c(4, 8, 14)]))
+pl_pred <- predict(
+    plsr_model,  ncomp = 4,
+    newdata = as.data.frame(large_scaled[, c(4, 5, 8, 9, 10, 11, 12)])
+    )
+nn_pred <- predict(nn_model, newdata = as.data.frame(large_scaled[, c(4, 7, 8, 12, 16)]))
+boot_predictions <- matrix(NA, nrow = nrow(large_scaled[, c(4, 5, 8, 9, 10, 11, 12)]), ncol = nboot)
 
 set.seed(123)
 for (i in 1:nboot) {
     back_features <- filter(scaled_features, Layer == "background")
     mono_features <- filter(scaled_features, Layer == "monolayer")
     bila_features <- filter(scaled_features, Layer == "bilayer")
+    bulk_features <- filter(scaled_features, Layer == "bulk")
     
     boot_index_back <- sample(seq_len(nrow(back_features)), replace = TRUE)
     boot_index_mono <- sample(seq_len(nrow(mono_features)), replace = TRUE)
     boot_index_bila <- sample(seq_len(nrow(bila_features)), replace = TRUE)
+    boot_index_bulk <- sample(seq_len(nrow(bulk_features)), replace = TRUE)
     
     boot_train_back <- back_features[boot_index_back, ]
     boot_train_mono <- mono_features[boot_index_mono, ]
     boot_train_bila <- bila_features[boot_index_bila, ]
-    boot_train <- rbind(boot_train_back, boot_train_mono, boot_train_bila)
+    boot_train_bulk <- bulk_features[boot_index_bulk, ]
+    boot_train <- rbind(
+        boot_train_back, boot_train_mono, 
+        boot_train_bila, boot_train_bulk
+        )
     
     model <- plsr(
-        thickness ~ intensity_ratio + mu1 + fwhm1 + A1 + A2 + area_ratio + rmse,
+        thickness ~ intensity_ratio + mu1 + fwhm2 + A1 + A2 + area1 + area2,
         data = boot_train, validation = "none", scale = FALSE, ncomp = 4
     )
     
     boot_predictions[, i] <- as.vector(
-        predict(model, newdata = as.data.frame(large_scaled[, c(4, 5, 7, 9, 10, 13, 15)]), ncomp = 4)
-        )
+        predict(
+            model, 
+            newdata = as.data.frame(large_scaled[, c(4, 5, 8, 9, 10, 11, 12)]), 
+            ncomp = 4
+            ))
 }
 
 mean_prediction <- rowMeans(boot_predictions)
@@ -298,4 +298,8 @@ ggplotly(pl_p)
 ggplotly(nn_p)
 ggplotly(p)
 
-write.csv(large_area_features, file = "../paraview_data/analysis_results.csv", row.names = FALSE)
+write.csv(
+    large_area_features, 
+    file = "../paraview_data/analysis_results.csv", 
+    row.names = FALSE
+    )

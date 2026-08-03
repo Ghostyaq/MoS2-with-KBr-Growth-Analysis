@@ -31,15 +31,30 @@ loocv <- function(train_fun, predict_fun, data){
     prediction
 }
 
+find_best_subset <- function(train_data){
+    results_list <- lapply(
+        all_combos, calculate_metrics,
+        data = train_data |> select(-thickness),
+        thickness = train_data$thickness,
+        real_measurements = train_data$thickness
+    )
+    
+    results <- do.call(rbind, results_list)
+    results |>
+        filter(Model == "NN") |>
+        arrange(RMSE) |>
+        slice(1)
+}
+
 real_measurements <- scaled_features$thickness
 temp <- scaled_features |> select(!c(Layer, thickness))
 
-numbers <- 1:17
-all_combos <- lapply(2:7, function(x) {
-    combn(numbers, x, simplify = FALSE)
-})
-all_combos <- unlist(all_combos, recursive = FALSE)
-#all_combos <- best$Indices_Used
+#numbers <- 1:17
+#all_combos <- lapply(2:7, function(x) {
+#    combn(numbers, x, simplify = FALSE)
+#})
+#all_combos <- unlist(all_combos, recursive = FALSE)
+all_combos <- best$Indices_Used
 
 # 1. Setup the Parallel Cluster
 num_cores <- max(1, detectCores() - 1)
@@ -68,7 +83,8 @@ calculate_metrics <- function(selection, data, thickness, real_measurements) {
     lda_prediction <- c(
         "background" = 0, 
         "monolayer" = 0.7, 
-        "bilayer" = 2.02
+        "bilayer" = 2.02,
+        "bulk" = 4.00
     )[lda_model_benchmark$class]
     
     # -------- PLSR (dynamic ncomp optimization) --------
@@ -76,6 +92,7 @@ calculate_metrics <- function(selection, data, thickness, real_measurements) {
         thickness ~ ., data = subset_data, 
         validation = "LOO", scale = FALSE
     )
+    
     # Extract MSEP cross-validation values (excluding the 0-component intercept model)
     cv_errors <- RMSEP(plsr_model, estimate = "CV")$val[1, 1, -1]
     best_ncomp <- which.min(cv_errors)
