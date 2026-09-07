@@ -64,8 +64,6 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
     )
     
     results <- parLapply(cl, seq_len(nrow(peak_locations)), function(i) {
-    #results <- lapply(seq_len(nrow(peak_locations)), function(i) {
-            
         spectrum_id <- peak_locations$id[i]
         
         y <- data[[spectrum_id + 1]]

@@ -1,32 +1,50 @@
 rm(list = ls())
-source("R_Code/functions.R")
 
-### MODEL CREATION ###
-filepath <- list.files(
-    path = "data/training_data", pattern = "\\.txt$", 
-    recursive = TRUE, full.names = TRUE
-    )
+source("R_Code/functions.R")
+source("R_Code/graphs.R")
+
+# ----- SPECIFICATIONS
 
 nboot <- 1000
 num_cores <- detectCores(logical = FALSE) - 1
-cl <- makeCluster(num_cores, type = "PSOCK")
 viz_scale <- 1
+mapping <- c("background" = 0, "monolayer" = 0.7, "bilayer" = 2.02, "bulk" = 4.00)
 
+training_data <- list.files(
+    path = "data/training_data", pattern = "\\.txt$", 
+    recursive = TRUE, full.names = TRUE
+)
+
+size <- 150
+large_area_scan <- paste0(
+    "data/default LAS/", 
+    size, "x", size, 
+    "/Large Area Scan.csv"
+)
+file_path <- "../data/July 2026/large_area_scan/25umx25um 150x150/Large Area Scan_001_Spec.Data 1.txt"
+
+
+# ----- LOADING FILES ----- 
+
+spectra <- lapply(training_data, fread)
+raw <- fread(file_path, header = FALSE)[-c(1, 2), ]
+
+# ----- CLUSTER EXPORTS -----
+
+cl <- makeCluster(num_cores, type = "PSOCK")
 clusterEvalQ(cl, {
     library(minpack.lm) 
     library(tibble)
     })
 clusterExport(cl, c("gaussian", "double_gaussian"))
 
-# -------------------------------- MODEL SETUP ------------------------------- #
-spectra <- lapply(filepath, fread)
+# ----- TRAINING MODELS ------
 results <- bind_rows(lapply(seq_along(filepath), function(i) {
     process_spectrum(filepath[i], i, cl)
 }))
 
 labels <- as.factor(basename(dirname(filepath)))
 results$Layer <- labels
-mapping <- c("background" = 0, "monolayer" = 0.7, "bilayer" = 2.02, "bulk" = 4.00)
 results$thickness <- mapping[as.character(results$Layer)]
 
 feature_table <- results |>
@@ -45,11 +63,10 @@ scaled_features <- as.data.frame(scaled_features)
 scaled_features$Layer <- feature_table$Layer
 scaled_features$thickness <- feature_table$thickness
 
-### LINEAR DISCRIMINATORY ANALYSIS ###
 lda_model_benchmark <- lda(
     thickness ~ x_axis1 + intensity_ratio + mu2 + fwhm1 + A2 + rmse,
     data = scaled_features, CV = TRUE
-)
+    )
 
 table(Actual = feature_table$thickness, Predicted = lda_model_benchmark$class)
 lda_model <- lda(
@@ -57,62 +74,42 @@ lda_model <- lda(
     data = scaled_features
     )
 
-### LINEAR REGRESSION ###
 linear_model <- lm(
     thickness ~ mu1 + mu2 + fwhm2 + area1 + area2 + area_ratio,
     data = scaled_features
     )
 
-### RIDGE REGRESSION ###
 X <- as.matrix(scaled_features[c(4, 7, 8, 12, 13, 14, 17)])
 y <- scaled_features$thickness
 ridge_cv_model <- cv.glmnet(X, y, alpha = 0)
 best_lambda <- ridge_cv_model$lambda.min
-print(best_lambda)
-plot(ridge_cv_model)
 ridge_model <- glmnet(X, y, alpha = 0, lambda = best_lambda)
-coef(ridge_model)
 
-### RANDOM FOREST REGRESSION ###
 forest_model <- randomForest(
     thickness ~ diff_peak + mu1 + mu2 + fwhm2 + A1 + area2,
     data = scaled_features, ntree = 500, mtry = 2, importance = TRUE
 )
 
-### SUPPORT VECTOR REGRESSION ###
 svr_model <- svm(
     thickness ~ x_axis2 + fwhm2 + snr,
     data = scaled_features, type = "eps-regression", kernel = "radial"
 )
 
-###### PARTIAL LINEAR REGRESSION ######
 plsr_model <- plsr(
     thickness ~ mu2 + A2 + area1 + area_ratio + diff_fit,
     data = scaled_features,
     validation = "LOO",
     scale = FALSE
 )
-validationplot(plsr_model, val.type = "RMSEP")
 
-############ # NEURAL?! #############
 nn_model <- nnet(
     thickness ~ x_axis2 + diff_peak + fwhm2 + area1 + area2 + area_ratio + r_squared,
     data = scaled_features, size = 3,  linout = TRUE, decay = 0.01, 
     maxit = 1000, trace = TRUE
 )
 
-### LARGE AREA SCAN PROCESSING ###
-size <- 150
-file_path <- paste0(
-    "data/default LAS/", 
-    size, "x", size, 
-    "/Large Area Scan.csv"
-)
-file_path <- "../data/July 2026/large_area_scan/25umx25um 150x150/Large Area Scan_001_Spec.Data 1.txt"
+# ----- LARGE AREA SCAN PREDICTION -----
 
-compute_time <- round(0.00588271 * size ^ 2 + 2.21832, 2)
-paste0("Time to Compute: ", round(compute_time %/% 60, 0), ":", (compute_time %% 60))
-raw <- fread(file_path, header = FALSE)[-c(1, 2), ]
 raw[] <- lapply(raw, as.numeric)
 
 data <- normalize_data(raw)
@@ -138,7 +135,6 @@ heatmap_df <- peak_summary |>
         intensity1, intensity2, intensity_ratio, A1, A2,  fwhm1, fwhm2, 
         area1, area2, area_ratio, snr, rmse, r_squared)
 
-### LDA MODEL APPLICATION ###
 large_area_features <- heatmap_df |>
     dplyr::select(
         x_axis1, x_axis2, diff_peak, intensity_ratio, 
@@ -151,15 +147,7 @@ large_scaled <- scale(
     scale = scale
 )
 
-# x_axis1, x_axis2, diff_peak, intensity_ratio, mu1, mu2, fwhm1, fwhm2, A1, A2,
-# area1, area2, area_ratio, snr, rmse, r_squared, diff_fit
-#LDA    : x_axis1, intensity_ratio, fwhm2, area1
-#LINEAR : intensity_ratio, mu1, fwhm2, A1, A2, area1, area2
-#RIDGE  : intensity_ratio, mu1, fwhm1, fwhm2, area1, area_ratio
-#FOREST : intensity_ratio, fwhm2, r_squared
-#SVR    : intensity_ratio, fwhm2, snr
-#PLSR   : intensity_ratio, mu1, fwhm2, A1, A2, area1, area2
-#NN     : x_axis2, mu1, mu2, fwhm2, A2, area_ratio
+# ----- APPLYING MODELS -----
 
 lda_pred <- predict(lda_model, newdata = as.data.frame(large_scaled) |> select(x_axis1, intensity_ratio, mu2, fwhm1, A2, rmse))
 lm_pred <- predict(linear_model, newdata = as.data.frame(large_scaled) |> select(mu1, mu2, fwhm2, area1, area2, area_ratio))
@@ -172,6 +160,8 @@ pl_pred <- predict(
     )
 nn_pred <- predict(nn_model, newdata = as.data.frame(large_scaled) |> select(x_axis2, diff_peak, fwhm2, area1, area2, area_ratio, r_squared))
 boot_predictions <- matrix(NA, nrow = nrow(large_scaled[, c(4, 5, 8, 9, 10, 11, 12)]), ncol = nboot)
+
+# ----- BOOTSTRAPPED PREDICTIONS FOR PLSR -----
 
 set.seed(123)
 for (i in 1:nboot) {
@@ -234,16 +224,16 @@ large_area_features <- large_area_features |>
             ) / 7
     )
 
-source("R_Code/graphs.R")
+# ----- GRAPHING -----
 
 ggplotly(lm_p)
-ggplotly(lda_p) #
+ggplotly(lda_p)
 ggplotly(rr_p)
-ggplotly(rf_p) #
+ggplotly(rf_p)
 ggplotly(vr_p)
 ggplotly(pl_p)
-ggplotly(nn_p) #
-ggplotly(p) #
+ggplotly(nn_p)
+ggplotly(p)
 
 write.csv(
     large_area_features, 
