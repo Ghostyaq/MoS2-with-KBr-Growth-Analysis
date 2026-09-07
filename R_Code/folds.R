@@ -3,6 +3,7 @@ rm(list = ls())
 # 0. Libraries, Sources, Clustering
 library(caret)
 library(parallel)
+library(pbapply)
 source("R_Code/functions.R")
 
 num_cores <- detectCores(logical = FALSE) - 1

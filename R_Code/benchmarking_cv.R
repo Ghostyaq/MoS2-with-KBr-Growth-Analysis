@@ -1,6 +1,7 @@
 rm(list = ls())
-load("data/RData/base_analysis.RData")
-load("data/RData/benchmarking_non_cv.RData")
+#load("data/RData/base_analysis.RData")
+#load("data/RData/benchmarking_non_cv.RData")
+load("data/RData/extended_analysis.RData")
 
 library(MASS)
 library(pls)
@@ -49,12 +50,12 @@ find_best_subset <- function(train_data){
 real_measurements <- scaled_features$thickness
 temp <- scaled_features |> select(!c(Layer, thickness))
 
-#numbers <- 1:17
-#all_combos <- lapply(2:7, function(x) {
-#    combn(numbers, x, simplify = FALSE)
-#})
-#all_combos <- unlist(all_combos, recursive = FALSE)
-all_combos <- best$Indices_Used
+numbers <- 1:17
+all_combos <- lapply(2:7, function(x) {
+    combn(numbers, x, simplify = FALSE)
+})
+all_combos <- unlist(all_combos, recursive = FALSE)
+#all_combos <- best$Indices_Used
 
 # 1. Setup the Parallel Cluster
 num_cores <- max(1, detectCores() - 1)

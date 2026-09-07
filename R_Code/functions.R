@@ -26,7 +26,6 @@ find_peak_locations <- function(raw, cl) {
     data <- raw[raw$V1 > 375 & raw$V1 < 420, ]
     x_axis <- data$V1
     
-    # Matrix of spectra (rows = Raman shifts, columns = spectra)
     spectra <- as.matrix(data[, -1])
     max_vals <- apply(as.matrix(raw[, -1]), 2, max, na.rm = TRUE)
     
@@ -65,6 +64,8 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
     )
     
     results <- parLapply(cl, seq_len(nrow(peak_locations)), function(i) {
+    #results <- lapply(seq_len(nrow(peak_locations)), function(i) {
+            
         spectrum_id <- peak_locations$id[i]
         
         y <- data[[spectrum_id + 1]]
@@ -80,6 +81,8 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
             snr = 0, rmse = 0, r_squared = 0, diff_fit = 0, status = "failed"
         )
         
+        fit_data <- data.frame(x = x, y = y)
+        
         fit <- tryCatch({
             nlsLM(y ~ double_gaussian(x, A1, mu1, sigma1, A2, mu2, sigma2, C),
                   start = list(
@@ -87,6 +90,7 @@ auto_gaussian_summary <- function(raw, peak_locations, cl) {
                       A2 = A2_guess, mu2 = mu2_guess, sigma2 = 3,
                       C = min(y)
                   ),
+                  data = fit_data,
                   lower = c(0, 370, 0.5, 0, 390, 0.5, 0),
                   upper = c(1100, 400, 20, 1100, 430, 20, 1100)
             )

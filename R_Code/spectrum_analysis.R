@@ -132,8 +132,7 @@ process_spectrum <- function(file, id){
     result <- peak |>
         mutate(
             diff_peak = abs(x_axis1 - x_axis2),
-            intensity_ratio = intensity1 / intensity2,
-            intensity_ratio = ifelse(intensity_ratio > 1, intensity_ratio, 1/intensity_ratio)
+            intensity_ratio = intensity1 / intensity2
         ) |>
         left_join(fit, by = "id")
     
