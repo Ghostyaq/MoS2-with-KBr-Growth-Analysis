@@ -132,8 +132,7 @@ process_spectrum <- function(file, id){
     result <- peak |>
         mutate(
             diff_peak = abs(x_axis1 - x_axis2),
-            intensity_ratio = intensity1 / intensity2,
-            intensity_ratio = ifelse(intensity_ratio > 1, intensity_ratio, 1/intensity_ratio)
+            intensity_ratio = intensity1 / intensity2
         ) |>
         left_join(fit, by = "id")
     
@@ -223,6 +222,11 @@ filepath <- c(
     "data/training_data/bilayer/08142025_3.txt"
     )
 
+filepath <- list.files(
+    path = "data/training_data", pattern = "\\.txt$", 
+    recursive = TRUE, full.names = TRUE
+    )
+
 # PCA ON RAW SPECTRA
 
 spectra <- lapply(filepath, fread)
@@ -237,7 +241,8 @@ labels <- as.factor(basename(dirname(filepath)))
 raw_scores$Layer <- labels
 
 ggplot(raw_scores, aes(PC1, PC4, colour = Layer)) +
-    geom_point(size = 4)
+    geom_point(size = 4) +
+    theme_bw()
 
 # PCA ON ENGINEERED COMPONENTS
 
@@ -316,8 +321,8 @@ lda_model <- lda(
             PC4 + 
             PC5
         ),
-    data = scaled_features#,
-    #CV = TRUE
+    data = scaled_features,
+    CV = TRUE
 )
 #}
 
